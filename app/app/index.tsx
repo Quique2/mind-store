@@ -11,6 +11,11 @@ import { Producto, useCart } from "../context/CartContext";
 const API = process.env.EXPO_PUBLIC_API_URL ?? "";
 const WHATSAPP = "https://chat.whatsapp.com/JCP0jVXXtV7GHWBcrnv7wp";
 
+interface Config {
+  spei: { clabe: string; banco: string; titular: string } | null;
+  tarjeta: boolean;
+}
+
 function IconoProducto({ id }: { id: string }) {
   if (id === "fidget-omega") {
     return (
@@ -31,6 +36,9 @@ function IconoProducto({ id }: { id: string }) {
 export default function Tienda() {
   const cart = useCart();
   const [productos, setProductos] = useState<Producto[]>([]);
+  const [config, setConfig] = useState<Config>({ spei: null, tarjeta: false });
+  const [verSpei, setVerSpei] = useState(false);
+  const [copiado, setCopiado] = useState(false);
   const [cargando, setCargando] = useState(true);
   const [pagando, setPagando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +49,10 @@ export default function Tienda() {
       .then(setProductos)
       .catch(() => setError("No se pudo cargar el catálogo"))
       .finally(() => setCargando(false));
+    fetch(`${API}/api/config`)
+      .then((r) => r.json())
+      .then(setConfig)
+      .catch(() => {});
   }, []);
 
   const totalCentavos = productos.reduce(
@@ -67,14 +79,33 @@ export default function Tienda() {
     }
   };
 
-  const apartarPorWhatsApp = () => {
-    const lineas = productos
+  const resumenPedido = () =>
+    productos
       .filter((p) => (cart.cantidades[p.id] ?? 0) > 0)
-      .map((p) => `• ${p.nombre} x${cart.cantidades[p.id]}`);
+      .map((p) => `• ${p.nombre} x${cart.cantidades[p.id]}`)
+      .join("\n");
+
+  const apartarPorWhatsApp = () => {
     const msg = encodeURIComponent(
-      `¡Hola MIND! Quiero apartar:\n${lineas.join("\n")}\nTotal: ${formatoMXN(totalCentavos)}\nPago en efectivo en el stand 🙌`,
+      `¡Hola MIND! Quiero apartar:\n${resumenPedido()}\nTotal: ${formatoMXN(totalCentavos)}\nPago en efectivo en el stand 🙌`,
     );
     Linking.openURL(`https://wa.me/?text=${msg}`);
+  };
+
+  const confirmarTransferencia = () => {
+    const msg = encodeURIComponent(
+      `¡Hola MIND! Ya hice la transferencia SPEI 💸\n${resumenPedido()}\nTotal: ${formatoMXN(totalCentavos)}\nConcepto: MIND`,
+    );
+    Linking.openURL(`https://wa.me/?text=${msg}`);
+  };
+
+  const copiarClabe = async () => {
+    if (!config.spei) return;
+    if (Platform.OS === "web" && navigator.clipboard) {
+      await navigator.clipboard.writeText(config.spei.clabe);
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2000);
+    }
   };
 
   return (
@@ -126,9 +157,38 @@ export default function Tienda() {
             <Text style={styles.total}>
               {cart.totalPiezas} pieza{cart.totalPiezas === 1 ? "" : "s"} · {formatoMXN(totalCentavos)}
             </Text>
-            <Pressable onPress={pagarConTarjeta} disabled={pagando} style={styles.cta}>
-              <Text style={styles.ctaTexto}>{pagando ? "Abriendo pago…" : "Pagar con tarjeta"}</Text>
-            </Pressable>
+            {config.spei ? (
+              <Pressable onPress={() => setVerSpei((v) => !v)} style={styles.cta}>
+                <Text style={styles.ctaTexto}>Transferencia SPEI · sin comisiones</Text>
+              </Pressable>
+            ) : null}
+            {config.spei && verSpei ? (
+              <View style={styles.speiPanel}>
+                <Text style={styles.speiTitulo}>
+                  Transfiere {formatoMXN(totalCentavos)} a:
+                </Text>
+                <Pressable onPress={copiarClabe} style={styles.clabeCaja}>
+                  <Text style={styles.clabe}>{config.spei.clabe}</Text>
+                  <Text style={styles.copiar}>{copiado ? "✓ copiada" : "copiar"}</Text>
+                </Pressable>
+                {config.spei.banco ? (
+                  <Text style={styles.speiDato}>
+                    {config.spei.banco}{config.spei.titular ? ` · ${config.spei.titular}` : ""}
+                  </Text>
+                ) : null}
+                <Text style={styles.speiDato}>Concepto: MIND · llega al instante</Text>
+                <Pressable onPress={confirmarTransferencia} style={styles.ctaConfirmar}>
+                  <Text style={styles.ctaTexto}>Ya transferí — confirmar por WhatsApp</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {config.tarjeta ? (
+              <Pressable onPress={pagarConTarjeta} disabled={pagando} style={styles.ctaSecundario}>
+                <Text style={styles.ctaSecundarioTexto}>
+                  {pagando ? "Abriendo pago…" : "Pagar con tarjeta"}
+                </Text>
+              </Pressable>
+            ) : null}
             <Pressable onPress={apartarPorWhatsApp} style={styles.ctaSecundario}>
               <Text style={styles.ctaSecundarioTexto}>Apartar y pagar en el stand</Text>
             </Pressable>
@@ -198,6 +258,23 @@ const styles = StyleSheet.create({
   },
   ctaSecundarioTexto: { color: Colors.blanco, fontWeight: "700", fontSize: 15 },
   error: { color: Colors.amarillo, textAlign: "center", fontWeight: "600" },
+  speiPanel: {
+    backgroundColor: "rgba(255,255,255,0.12)", borderColor: Colors.borde, borderWidth: 1.5,
+    borderRadius: radius.m, padding: spacing.m, gap: spacing.s,
+  },
+  speiTitulo: { color: Colors.blanco, fontWeight: "700", fontSize: 15, textAlign: "center" },
+  clabeCaja: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.s,
+    backgroundColor: Colors.blanco, borderRadius: radius.s, paddingVertical: 12,
+    paddingHorizontal: spacing.m, minHeight: 44,
+  },
+  clabe: { color: Colors.tinta, fontWeight: "800", fontSize: 16, letterSpacing: 1 },
+  copiar: { color: Colors.azul, fontWeight: "700", fontSize: 13 },
+  speiDato: { color: Colors.blanco, opacity: 0.85, fontSize: 12.5, textAlign: "center" },
+  ctaConfirmar: {
+    backgroundColor: Colors.lima, borderRadius: radius.pill, paddingVertical: 14,
+    alignItems: "center", minHeight: 44, marginTop: 4,
+  },
   pie: { marginTop: spacing.xl, alignItems: "center", minHeight: 44, justifyContent: "center" },
   pieTexto: { color: Colors.blanco, opacity: 0.85, textDecorationLine: "underline" },
 });

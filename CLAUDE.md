@@ -10,12 +10,17 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
 - Deploy: Railway con Dockerfile único (API sirve el export web en el mismo puerto).
 
 ## Flujos de pago
-- Tarjeta: `POST /api/checkout` crea una Checkout Session de Stripe y redirige.
-  Sin `STRIPE_SECRET_KEY` responde 503 y la tienda sigue funcionando con WhatsApp.
+- **Transferencia SPEI (principal)**: directo a la cuenta bancaria, al instante y
+  sin comisiones. La tienda muestra la CLABE (de `/api/config`) y el comprador
+  confirma por WhatsApp. Sin CLABE configurada, la opción no aparece.
+- Tarjeta (opcional): `POST /api/checkout` crea una Checkout Session de Stripe.
+  Sin `STRIPE_SECRET_KEY`, el botón no aparece.
 - Efectivo: botón "Apartar" abre WhatsApp con el resumen del pedido.
 
 ## Variables de entorno (Railway → Variables; NUNCA en el repo)
-- `STRIPE_SECRET_KEY` — clave secreta de Stripe (usa una clave restringida).
+- `SPEI_CLABE` — CLABE que recibe las transferencias (activa la opción SPEI).
+- `SPEI_BANCO`, `SPEI_TITULAR` — opcionales, se muestran junto a la CLABE.
+- `STRIPE_SECRET_KEY` — opcional, activa pago con tarjeta (clave restringida).
 - `PUBLIC_URL` — URL pública del deploy (para success/cancel de Stripe).
 
 ## Desarrollo
@@ -25,6 +30,6 @@ npm run dev:api          # API en :3000
 npm run dev:app          # Expo web (define EXPO_PUBLIC_API_URL=http://localhost:3000)
 ```
 
-## Precios actuales (calculados con slicing real en K2 Plus, agosto 2026)
-- Fidget Omega MIND: $179 MXN (costo ≈ $78: 85 g PLA + 2h40m + mano de obra)
-- Spinner de Engranajes: $149 MXN (costo ≈ $66: 44 g PLA + 2h31m + ensamble)
+## Precios actuales (definidos por el grupo, agosto 2026)
+- Fidget Omega MIND: $50 MXN
+- Spinner de Engranajes: $149 MXN

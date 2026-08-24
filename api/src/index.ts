@@ -19,6 +19,21 @@ app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
 app.get("/api/products", (_req, res) => res.json(PRODUCTS));
 
+// Datos para transferencia SPEI directa (sin intermediarios). Se configuran en
+// variables de entorno de Railway; si faltan, la tienda no muestra la opción.
+app.get("/api/config", (_req, res) =>
+  res.json({
+    spei: process.env.SPEI_CLABE
+      ? {
+          clabe: process.env.SPEI_CLABE,
+          banco: process.env.SPEI_BANCO ?? "",
+          titular: process.env.SPEI_TITULAR ?? "",
+        }
+      : null,
+    tarjeta: Boolean(stripeKey),
+  }),
+);
+
 const CartSchema = z.object({
   items: z
     .array(
