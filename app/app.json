@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Tienda MIND",
+    "slug": "mind-store",
+    "version": "1.0.0",
+    "scheme": "mindstore",
+    "platforms": ["web"],
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": ["expo-router"],
+    "experiments": { "typedRoutes": true }
+  }
+}

@@ -1,0 +1,80 @@
+// API de la tienda MIND: catálogo + Stripe Checkout, y en producción sirve
+// también el build web de Expo (dist único en Railway, patrón continental).
+import path from "node:path";
+import fs from "node:fs";
+import express from "express";
+import cors from "cors";
+import Stripe from "stripe";
+import { z } from "zod";
+import { PRODUCTS, byId } from "./products";
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+const stripeKey = process.env.STRIPE_SECRET_KEY;
+const stripe = stripeKey ? new Stripe(stripeKey) : null;
+
+app.get("/healthz", (_req, res) => res.json({ ok: true }));
+
+app.get("/api/products", (_req, res) => res.json(PRODUCTS));
+
+const CartSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        id: z.string(),
+        cantidad: z.number().int().min(1).max(20),
+      }),
+    )
+    .min(1)
+    .max(10),
+});
+
+app.post("/api/checkout", async (req, res) => {
+  if (!stripe) {
+    return res.status(503).json({
+      error: "Pagos con tarjeta aún no configurados. Aparta tu pedido por WhatsApp.",
+    });
+  }
+  const parsed = CartSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Carrito inválido" });
+  }
+  const lineItems = [];
+  for (const item of parsed.data.items) {
+    const p = byId(item.id);
+    if (!p) return res.status(400).json({ error: `Producto desconocido: ${item.id}` });
+    lineItems.push({
+      price_data: {
+        currency: "mxn",
+        product_data: { name: p.nombre, description: p.descripcion },
+        unit_amount: p.precioCentavos,
+      },
+      quantity: item.cantidad,
+    });
+  }
+  const origin = process.env.PUBLIC_URL ?? `${req.protocol}://${req.get("host")}`;
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: lineItems,
+      success_url: `${origin}/exito?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/cancelado`,
+    });
+    return res.json({ url: session.url });
+  } catch (err) {
+    console.error("stripe checkout error", err);
+    return res.status(502).json({ error: "No se pudo iniciar el pago. Intenta de nuevo." });
+  }
+});
+
+// build web de Expo (app/dist) en producción
+const dist = path.resolve(__dirname, "../../app/dist");
+if (fs.existsSync(dist)) {
+  app.use(express.static(dist));
+  app.get("*", (_req, res) => res.sendFile(path.join(dist, "index.html")));
+}
+
+const port = Number(process.env.PORT ?? 3000);
+app.listen(port, () => console.log(`mind-store api en :${port}`));
