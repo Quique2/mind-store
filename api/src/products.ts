@@ -18,7 +18,7 @@ export const PRODUCTS: Product[] = [
     id: "spinner-engranes",
     nombre: "Spinner de Engranajes",
     descripcion: "Spinner de 4 engranajes que se arma sin baleros. Gigante y muy satisfactorio (~13 cm).",
-    precioCentavos: 14900,
+    precioCentavos: 10000,
   },
 ];
 
