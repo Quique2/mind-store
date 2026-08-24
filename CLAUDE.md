@@ -17,10 +17,12 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   Sin `STRIPE_SECRET_KEY`, el botón no aparece.
 - Efectivo: botón "Apartar" abre WhatsApp con el resumen del pedido.
 
-## Variables de entorno (Railway → Variables; NUNCA en el repo)
-- `SPEI_CLABE` — CLABE que recibe las transferencias (activa la opción SPEI).
+## Variables de entorno (Railway → Variables)
+- `SPEI_CLABE` — opcional: sustituye la CLABE por defecto del grupo
+  (`646990404076302792`, verificada con el dígito de control de Banxico).
 - `SPEI_BANCO`, `SPEI_TITULAR` — opcionales, se muestran junto a la CLABE.
-- `STRIPE_SECRET_KEY` — opcional, activa pago con tarjeta (clave restringida).
+- `STRIPE_SECRET_KEY` — opcional, activa pago con tarjeta (clave restringida;
+  las claves secretas NUNCA van en el repo, solo en Railway).
 - `PUBLIC_URL` — URL pública del deploy (para success/cancel de Stripe).
 
 ## Desarrollo

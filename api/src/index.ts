@@ -19,17 +19,16 @@ app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
 app.get("/api/products", (_req, res) => res.json(PRODUCTS));
 
-// Datos para transferencia SPEI directa (sin intermediarios). Se configuran en
-// variables de entorno de Railway; si faltan, la tienda no muestra la opción.
+// Datos para transferencia SPEI directa (sin intermediarios). La CLABE es dato
+// público de cobro (solo permite depositar); las env vars la pueden sustituir.
+const CLABE_MIND = "646990404076302792";
 app.get("/api/config", (_req, res) =>
   res.json({
-    spei: process.env.SPEI_CLABE
-      ? {
-          clabe: process.env.SPEI_CLABE,
-          banco: process.env.SPEI_BANCO ?? "",
-          titular: process.env.SPEI_TITULAR ?? "",
-        }
-      : null,
+    spei: {
+      clabe: process.env.SPEI_CLABE ?? CLABE_MIND,
+      banco: process.env.SPEI_BANCO ?? "",
+      titular: process.env.SPEI_TITULAR ?? "MIND",
+    },
     tarjeta: Boolean(stripeKey),
   }),
 );
