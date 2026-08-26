@@ -35,3 +35,6 @@ npm run dev:app          # Expo web (define EXPO_PUBLIC_API_URL=http://localhost
 ## Precios actuales (definidos por el grupo, agosto 2026)
 - Fidget Omega MIND: $50 MXN
 - Spinner de Engranajes: $100 MXN
+- Cubito Fidget: $70 MXN
+- Pelota antiestrés: $20 MXN
+- Squishy / Pop-it / Stickers: $10 MXN c/u

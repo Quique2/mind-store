@@ -16,21 +16,69 @@ interface Config {
   tarjeta: boolean;
 }
 
+const TILE_COLOR: Record<string, string> = {
+  "fidget-omega": Colors.teal,
+  "spinner-engranes": Colors.rosa,
+  cubito: Colors.amarillo,
+  "pelota-antiestres": Colors.lima,
+  squishy: Colors.cian,
+  popit: Colors.magenta,
+  stickers: "#F59E0B",
+};
+
 function IconoProducto({ id }: { id: string }) {
-  if (id === "fidget-omega") {
-    return (
-      <Svg width={52} height={52} viewBox="0 0 52 52" fill="none" stroke="#fff" strokeWidth={2.6}>
-        <Path d="M26 5 L44 15.5 V36.5 L26 47 L8 36.5 V15.5 Z" />
-        <Path d="M26 14 L36.5 20 V32 L26 38 L15.5 32 V20 Z" />
-      </Svg>
-    );
+  const base = { width: 52, height: 52, viewBox: "0 0 52 52", fill: "none" as const,
+                 stroke: "#fff", strokeWidth: 2.6 };
+  switch (id) {
+    case "fidget-omega":
+      return (
+        <Svg {...base}>
+          <Path d="M26 5 L44 15.5 V36.5 L26 47 L8 36.5 V15.5 Z" />
+          <Path d="M26 14 L36.5 20 V32 L26 38 L15.5 32 V20 Z" />
+        </Svg>
+      );
+    case "spinner-engranes":
+      return (
+        <Svg {...base}>
+          <Circle cx={26} cy={26} r={9} />
+          <Path d="M26 9 v6 M26 37 v6 M9 26 h6 M37 26 h6 M14 14 l4.2 4.2 M33.8 33.8 L38 38 M38 14 l-4.2 4.2 M18.2 33.8 L14 38" />
+        </Svg>
+      );
+    case "cubito":
+      return (
+        <Svg {...base}>
+          <Path d="M26 6 L44 15 V37 L26 46 L8 37 V15 Z M8 15 L26 24 L44 15 M26 24 V46" />
+        </Svg>
+      );
+    case "pelota-antiestres":
+      return (
+        <Svg {...base}>
+          <Circle cx={26} cy={26} r={18} />
+          <Path d="M14 20 q6 -7 14 -8" />
+        </Svg>
+      );
+    case "squishy":
+      return (
+        <Svg {...base}>
+          <Path d="M10 22 q0 -12 16 -12 q16 0 16 12 q0 8 -5 13 q-5 5 -11 5 q-6 0 -11 -5 q-5 -5 -5 -13 Z" />
+          <Path d="M19 24 v3 M33 24 v3 M20 33 q6 4 12 0" />
+        </Svg>
+      );
+    case "popit":
+      return (
+        <Svg {...base}>
+          <Path d="M8 12 q18 -8 36 0 V40 q-18 8 -36 0 Z" />
+          <Circle cx={18} cy={21} r={3.4} /><Circle cx={26} cy={19.5} r={3.4} /><Circle cx={34} cy={21} r={3.4} />
+          <Circle cx={18} cy={31} r={3.4} /><Circle cx={26} cy={32.5} r={3.4} /><Circle cx={34} cy={31} r={3.4} />
+        </Svg>
+      );
+    default:
+      return (
+        <Svg {...base}>
+          <Path d="M10 10 H42 V32 L32 42 H10 Z M32 42 V32 H42" />
+        </Svg>
+      );
   }
-  return (
-    <Svg width={52} height={52} viewBox="0 0 52 52" fill="none" stroke="#fff" strokeWidth={2.6}>
-      <Circle cx={26} cy={26} r={9} />
-      <Path d="M26 9 v6 M26 37 v6 M9 26 h6 M37 26 h6 M14 14 l4.2 4.2 M33.8 33.8 L38 38 M38 14 l-4.2 4.2 M18.2 33.8 L14 38" />
-    </Svg>
-  );
 }
 
 export default function Tienda() {
@@ -128,7 +176,7 @@ export default function Tienda() {
             const n = cart.cantidades[p.id] ?? 0;
             return (
               <View key={p.id} style={styles.tarjeta}>
-                <View style={[styles.tile, p.id === "fidget-omega" ? styles.tileAzul : styles.tileRosa]}>
+                <View style={[styles.tile, { backgroundColor: TILE_COLOR[p.id] ?? Colors.teal }]}>
                   <IconoProducto id={p.id} />
                 </View>
                 <View style={styles.info}>
@@ -224,8 +272,6 @@ const styles = StyleSheet.create({
     width: 84, height: 84, borderRadius: radius.m,
     alignItems: "center", justifyContent: "center",
   },
-  tileAzul: { backgroundColor: Colors.teal },
-  tileRosa: { backgroundColor: Colors.rosa },
   info: { flex: 1, gap: 2 },
   nombre: { color: Colors.tinta, fontWeight: "700", fontSize: 16 },
   desc: { color: Colors.tinta, opacity: 0.7, fontSize: 12.5, lineHeight: 17 },
