@@ -25,6 +25,16 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   las claves secretas NUNCA van en el repo, solo en Railway).
 - `PUBLIC_URL` — URL pública del deploy (para success/cancel de Stripe).
 
+## Cuentas del grupo
+- `cuentas/movimientos.csv` — libro de efectivo y Revolut/SPEI (historial auditable
+  en git: cada peso queda con fecha, autor y diff). Una fila por movimiento.
+- `/cuentas?clave=...` — estado de cuenta (saldos, totales por evento, movimientos);
+  `/cuentas.csv?clave=...` — el mismo dato como CSV. Clave en `CUENTAS_CLAVE`.
+- Stripe NO se copia al CSV: la página lo consulta en vivo (caché 10 min) y solo
+  cuenta cargos desde `DESDE_TIENDA` (2026-08-24, lanzamiento) — la cuenta tiene
+  cargos previos que no son ventas de MIND.
+- Routine semanal "Cuentas MIND" (lunes 9:00 MX) revisa la página y reporta.
+
 ## Desarrollo
 ```
 npm install
