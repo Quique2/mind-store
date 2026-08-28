@@ -7,6 +7,7 @@ import cors from "cors";
 import Stripe from "stripe";
 import { z } from "zod";
 import { PRODUCTS, byId } from "./products";
+import { leerCSV, movsStripe, renderCuentas, renderCSV } from "./cuentas";
 
 const app = express();
 app.use(cors());
@@ -82,6 +83,24 @@ app.post("/api/checkout", async (req, res) => {
     return res.status(502).json({ error: "No se pudo iniciar el pago. Intenta de nuevo." });
   }
 });
+
+// Estado de cuenta del grupo, protegido con clave simple (CUENTAS_CLAVE)
+async function cuentasHandler(req: express.Request, res: express.Response, csv: boolean) {
+  const clave = process.env.CUENTAS_CLAVE;
+  if (!clave || req.query.clave !== clave) {
+    return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
+  }
+  const manuales = leerCSV();
+  const st = await movsStripe(stripe);
+  const movs = [...manuales, ...st.movs];
+  if (csv) {
+    res.type("text/csv").send(renderCSV(movs));
+  } else {
+    res.type("html").send(renderCuentas(movs, st.ok));
+  }
+}
+app.get("/cuentas", (req, res) => { void cuentasHandler(req, res, false); });
+app.get("/cuentas.csv", (req, res) => { void cuentasHandler(req, res, true); });
 
 // build web de Expo (app/dist) en producción
 const dist = path.resolve(__dirname, "../../app/dist");

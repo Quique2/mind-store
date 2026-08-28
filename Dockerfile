@@ -16,5 +16,6 @@ COPY --from=build /repo/api/package.json api/
 RUN npm ci --omit=dev -w api
 COPY --from=build /repo/api/dist api/dist
 COPY --from=build /repo/app/dist app/dist
+COPY --from=build /repo/cuentas cuentas
 EXPOSE 3000
 CMD ["node", "api/dist/index.js"]

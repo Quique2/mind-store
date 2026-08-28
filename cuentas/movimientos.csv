@@ -1,0 +1,7 @@
+fecha,evento,metodo,concepto,monto_mxn,detalle
+2026-08-20,inicial,efectivo,Saldo inicial de caja,664.00,corte pre-REDSPOT
+2026-08-27,REDSPOT,efectivo,Ventas en efectivo,770.00,corte de caja post-evento (664 -> 1434)
+2026-08-26,REDSPOT,revolut,Hexafidget,50.00,Linda Veronica Almeida Landa
+2026-08-26,REDSPOT,revolut,Fidget Spinner,100.05,Leonardo Lopez Guerra
+2026-08-27,REDSPOT,revolut,Pelota antiestres,20.00,David Alain Roccio Ontiveros De Luna
+2026-08-27,REDSPOT,revolut,Pelota antiestres,20.00,Diego Ulloa Chaparro
