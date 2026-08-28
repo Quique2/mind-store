@@ -7,7 +7,7 @@ import cors from "cors";
 import Stripe from "stripe";
 import { z } from "zod";
 import { PRODUCTS, byId } from "./products";
-import { leerCSV, movsStripe, renderCuentas, renderCSV, agregarMov,
+import { leerCSV, movsStripe, renderCuentas, renderCSV, agregarMov, borrarMov,
          hayDiscoPersistente } from "./cuentas";
 
 const app = express();
@@ -132,6 +132,15 @@ app.post("/cuentas/nuevo", express.urlencoded({ extended: false }), (req, res) =
                concepto: m.concepto, monto: m.monto, detalle: m.detalle });
   const ok = `✓ Registrado: ${m.concepto} · $${m.monto.toFixed(2)} (${m.metodo})`;
   res.redirect(`/cuentas?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(ok)}`);
+});
+
+app.post("/cuentas/borrar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const idx = Number((req.body as { idx?: string }).idx);
+  if (!Number.isInteger(idx) || idx < 0) return res.status(400).send("Índice inválido.");
+  const concepto = borrarMov(idx);
+  const msg = concepto ? `✓ Borrado: ${concepto}` : "No se encontró ese movimiento.";
+  res.redirect(`/cuentas?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(msg)}`);
 });
 
 // build web de Expo (app/dist) en producción

@@ -13,6 +13,7 @@ export interface Mov {
   monto: number;      // MXN, bruto
   comision: number;   // MXN
   detalle: string;
+  idx?: number;       // solo los capturados en la página: su línea en el disco
 }
 
 // Movimientos capturados desde la página: viven en el disco persistente de
@@ -21,22 +22,38 @@ export interface Mov {
 const DIR_DATOS = process.env.DATA_DIR ?? "/data";
 const ARCHIVO_NUEVOS = path.join(DIR_DATOS, "movimientos.csv");
 
-function parseCSV(texto: string): Mov[] {
-  return texto.trim().split(/\r?\n/).slice(1).filter(Boolean).map((l) => {
-    const [fecha, evento, metodo, concepto, monto, detalle] = l.split(",");
-    return { fecha, evento, metodo, concepto, monto: Number(monto), comision: 0,
-             detalle: (detalle ?? "").replace(/^"|"$/g, "") };
-  });
+function parseCSV(texto: string, conIdx: boolean): Mov[] {
+  return texto.trim().split(/\r?\n/).slice(1).map((l, i) => ({ l, i }))
+    .filter(({ l }) => l.trim())
+    .map(({ l, i }) => {
+      const [fecha, evento, metodo, concepto, monto, detalle] = l.split(",");
+      const m: Mov = { fecha, evento, metodo, concepto, monto: Number(monto),
+                       comision: 0, detalle: (detalle ?? "").replace(/^"|"$/g, "") };
+      if (conIdx) m.idx = i;
+      return m;
+    });
 }
 
 export function leerCSV(): Mov[] {
   const movs: Mov[] = [];
   const gitCSV = path.resolve(__dirname, "../../cuentas/movimientos.csv");
-  if (fs.existsSync(gitCSV)) movs.push(...parseCSV(fs.readFileSync(gitCSV, "utf8")));
+  if (fs.existsSync(gitCSV)) movs.push(...parseCSV(fs.readFileSync(gitCSV, "utf8"), false));
   if (fs.existsSync(ARCHIVO_NUEVOS)) {
-    movs.push(...parseCSV(fs.readFileSync(ARCHIVO_NUEVOS, "utf8")));
+    movs.push(...parseCSV(fs.readFileSync(ARCHIVO_NUEVOS, "utf8"), true));
   }
   return movs;
+}
+
+/** Borra por índice un movimiento capturado en la página. Devuelve su concepto. */
+export function borrarMov(idx: number): string | null {
+  if (!fs.existsSync(ARCHIVO_NUEVOS)) return null;
+  const lineas = fs.readFileSync(ARCHIVO_NUEVOS, "utf8").trim().split(/\r?\n/);
+  const cuerpo = lineas.slice(1);
+  if (idx < 0 || idx >= cuerpo.length) return null;
+  const [, , , concepto] = cuerpo[idx].split(",");
+  cuerpo.splice(idx, 1);
+  fs.writeFileSync(ARCHIVO_NUEVOS, [lineas[0], ...cuerpo].join("\n") + "\n");
+  return concepto ?? "movimiento";
 }
 
 export function hayDiscoPersistente(): boolean {
@@ -123,11 +140,16 @@ export function renderCuentas(movs: Mov[], stripeOk: boolean,
       .reduce((s, m) => s + m.monto, 0))}</td></tr>`).join("");
   const clase = (m: Mov) => (["efectivo", "revolut", "spei", "stripe"].includes(m.metodo)
     ? m.metodo : "otro");
+  const borrar = (m: Mov) => m.idx === undefined ? "" :
+    `<form method="post" action="/cuentas/borrar?clave=${encodeURIComponent(clave)}" ` +
+    `onsubmit="return confirm('¿Borrar este movimiento?')"><input type="hidden" name="idx" ` +
+    `value="${m.idx}"><button class="del" title="Borrar movimiento">✕</button></form>`;
   const filas = orden.map((m) =>
     `<tr><td>${esc(m.fecha)}</td><td><span class="met met-${clase(m)}">${esc(m.metodo)}</span></td>` +
     `<td>${esc(m.concepto)}<div class="det">${esc(m.detalle)}</div></td>` +
     `<td class="num">${fmt(m.monto)}</td>` +
-    `<td class="num">${m.comision ? "−" + fmt(m.comision) : "—"}</td></tr>`).join("");
+    `<td class="num">${m.comision ? "−" + fmt(m.comision) : "—"}</td>` +
+    `<td class="acc">${borrar(m)}</td></tr>`).join("");
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cuentas MIND</title>
@@ -170,6 +192,9 @@ form.nuevo button:hover { background:#232D93; }
 .rapidos button:hover { background:#E2DFCB; }
 footer { font-size:11.5px; color:#8A8FB5; margin-top:26px; }
 .tabla-scroll { overflow-x:auto; }
+td.acc { padding:6px 8px; width:38px; }
+button.del { font:inherit; font-size:13px; line-height:1; color:#A03434; background:#FBECEC; border:1px solid #F0CFCF; border-radius:8px; width:30px; height:30px; cursor:pointer; }
+button.del:hover { background:#F5D9D9; }
 </style></head><body>
 <header><h1>Cuentas MIND</h1><p>Estado de cuenta del grupo · Stripe en vivo · efectivo y Revolut auditados en git</p></header>
 <main>
@@ -229,7 +254,7 @@ ${stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mism
 <div class="tabla-scroll"><table><tr><th>Evento</th><th class="num">Total</th></tr>${porEvento}</table></div>
 <h2>Movimientos</h2>
 <div class="tabla-scroll"><table>
-<tr><th>Fecha</th><th>Método</th><th>Concepto</th><th class="num">Monto</th><th class="num">Comisión</th></tr>
+<tr><th>Fecha</th><th>Método</th><th>Concepto</th><th class="num">Monto</th><th class="num">Comisión</th><th></th></tr>
 ${filas}
 </table></div>
 <footer>Actualizado al cargar la página · Stripe con caché de 10 min · descarga CSV: agrega <b>/cuentas.csv</b> con la misma clave.</footer>
