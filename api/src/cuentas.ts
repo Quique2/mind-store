@@ -15,15 +15,50 @@ export interface Mov {
   detalle: string;
 }
 
-export function leerCSV(): Mov[] {
-  const p = path.resolve(__dirname, "../../cuentas/movimientos.csv");
-  if (!fs.existsSync(p)) return [];
-  const lineas = fs.readFileSync(p, "utf8").trim().split(/\r?\n/).slice(1);
-  return lineas.filter(Boolean).map((l) => {
+// Movimientos capturados desde la página: viven en el disco persistente de
+// Railway (/data) para que sobrevivan a los redeploys. El histórico versionado
+// sigue en cuentas/movimientos.csv (git) y ambos se fusionan al mostrar.
+const DIR_DATOS = process.env.DATA_DIR ?? "/data";
+const ARCHIVO_NUEVOS = path.join(DIR_DATOS, "movimientos.csv");
+
+function parseCSV(texto: string): Mov[] {
+  return texto.trim().split(/\r?\n/).slice(1).filter(Boolean).map((l) => {
     const [fecha, evento, metodo, concepto, monto, detalle] = l.split(",");
     return { fecha, evento, metodo, concepto, monto: Number(monto), comision: 0,
-             detalle: detalle ?? "" };
+             detalle: (detalle ?? "").replace(/^"|"$/g, "") };
   });
+}
+
+export function leerCSV(): Mov[] {
+  const movs: Mov[] = [];
+  const gitCSV = path.resolve(__dirname, "../../cuentas/movimientos.csv");
+  if (fs.existsSync(gitCSV)) movs.push(...parseCSV(fs.readFileSync(gitCSV, "utf8")));
+  if (fs.existsSync(ARCHIVO_NUEVOS)) {
+    movs.push(...parseCSV(fs.readFileSync(ARCHIVO_NUEVOS, "utf8")));
+  }
+  return movs;
+}
+
+export function hayDiscoPersistente(): boolean {
+  try {
+    fs.mkdirSync(DIR_DATOS, { recursive: true });
+    fs.accessSync(DIR_DATOS, fs.constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const limpiar = (s: string) => s.replace(/[,\r\n"]/g, " ").trim().slice(0, 80);
+
+export function agregarMov(m: Omit<Mov, "comision">): void {
+  fs.mkdirSync(DIR_DATOS, { recursive: true });
+  if (!fs.existsSync(ARCHIVO_NUEVOS)) {
+    fs.writeFileSync(ARCHIVO_NUEVOS, "fecha,evento,metodo,concepto,monto_mxn,detalle\n");
+  }
+  const fila = [m.fecha, limpiar(m.evento) || "sin evento", m.metodo,
+                limpiar(m.concepto), m.monto.toFixed(2), limpiar(m.detalle)].join(",");
+  fs.appendFileSync(ARCHIVO_NUEVOS, fila + "\n");
 }
 
 // La cuenta de Stripe puede tener cargos anteriores a la tienda (p. ej. uno del
@@ -67,7 +102,14 @@ export async function movsStripe(stripe: Stripe | null): Promise<{ movs: Mov[]; 
 const fmt = (n: number) =>
   "$" + n.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function renderCuentas(movs: Mov[], stripeOk: boolean): string {
+// todo lo que venga del formulario, del CSV o de Stripe se escapa antes de
+// insertarse en el HTML
+const esc = (s: string) =>
+  String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+           .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+export function renderCuentas(movs: Mov[], stripeOk: boolean,
+                              clave: string, aviso?: string): string {
   const orden = [...movs].sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
   const suma = (f: (m: Mov) => boolean) =>
     movs.filter(f).reduce((s, m) => s + m.monto - m.comision, 0);
@@ -77,11 +119,13 @@ export function renderCuentas(movs: Mov[], stripeOk: boolean): string {
   const total = efectivo + revolut + stripeNeto;
   const eventos = [...new Set(movs.map((m) => m.evento))].filter((e) => e !== "inicial");
   const porEvento = eventos.map((e) =>
-    `<tr><td>${e}</td><td class="num">${fmt(movs.filter((m) => m.evento === e)
+    `<tr><td>${esc(e)}</td><td class="num">${fmt(movs.filter((m) => m.evento === e)
       .reduce((s, m) => s + m.monto, 0))}</td></tr>`).join("");
+  const clase = (m: Mov) => (["efectivo", "revolut", "spei", "stripe"].includes(m.metodo)
+    ? m.metodo : "otro");
   const filas = orden.map((m) =>
-    `<tr><td>${m.fecha}</td><td><span class="met met-${m.metodo}">${m.metodo}</span></td>` +
-    `<td>${m.concepto}<div class="det">${m.detalle}</div></td>` +
+    `<tr><td>${esc(m.fecha)}</td><td><span class="met met-${clase(m)}">${esc(m.metodo)}</span></td>` +
+    `<td>${esc(m.concepto)}<div class="det">${esc(m.detalle)}</div></td>` +
     `<td class="num">${fmt(m.monto)}</td>` +
     `<td class="num">${m.comision ? "−" + fmt(m.comision) : "—"}</td></tr>`).join("");
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
@@ -113,11 +157,23 @@ tr:last-child td { border-bottom:none; }
 .met-revolut, .met-spei { background:#DDF1F8; color:#156F8F; }
 .met-stripe { background:#E4E4F9; color:#4740B3; }
 .aviso { background:#FDF3D7; border:1px solid #EAD9A0; border-radius:10px; padding:10px 14px; font-size:12.5px; margin:12px 0; }
+.ok-aviso { background:#E8F3D9; border:1px solid #BEDD97; border-radius:10px; padding:10px 14px; font-size:13px; margin:12px 0; color:#3F6B10; font-weight:600; }
+form.nuevo { background:#fff; border:1px solid #E4E1D2; border-radius:14px; padding:16px; display:grid; gap:12px; }
+form.nuevo .fila { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+form.nuevo label { font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:#6A6F98; display:block; margin-bottom:3px; }
+form.nuevo input, form.nuevo select { width:100%; font:inherit; font-size:15px; padding:10px 12px; border:1.5px solid #DDD9C6; border-radius:10px; background:#FCFBF5; color:#1C2260; min-height:44px; }
+form.nuevo input:focus, form.nuevo select:focus { outline:2px solid #2E4BC6; outline-offset:1px; border-color:#2E4BC6; }
+form.nuevo button { font:inherit; font-weight:800; font-size:15px; color:#fff; background:#2E4BC6; border:none; border-radius:999px; padding:14px; min-height:48px; cursor:pointer; }
+form.nuevo button:hover { background:#232D93; }
+.rapidos { display:flex; flex-wrap:wrap; gap:8px; }
+.rapidos button { font:inherit; font-size:13px; font-weight:600; background:#EFEDDF; color:#1C2260; border:1.5px solid #DDD9C6; border-radius:999px; padding:9px 14px; min-height:40px; cursor:pointer; }
+.rapidos button:hover { background:#E2DFCB; }
 footer { font-size:11.5px; color:#8A8FB5; margin-top:26px; }
 .tabla-scroll { overflow-x:auto; }
 </style></head><body>
 <header><h1>Cuentas MIND</h1><p>Estado de cuenta del grupo · Stripe en vivo · efectivo y Revolut auditados en git</p></header>
 <main>
+${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
 ${stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mismo — se muestran solo efectivo y Revolut.</div>'}
 <div class="saldos">
   <div class="saldo"><small>Efectivo</small><b>${fmt(efectivo)}</b></div>
@@ -125,6 +181,50 @@ ${stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mism
   <div class="saldo"><small>Stripe (neto)</small><b>${fmt(stripeNeto)}</b></div>
   <div class="saldo total"><small>Total MIND</small><b>${fmt(total)}</b></div>
 </div>
+<h2>Registrar efectivo o Revolut</h2>
+<form class="nuevo" method="post" action="/cuentas/nuevo?clave=${encodeURIComponent(clave)}">
+  <div class="rapidos">
+    <button type="button" data-p="Fidget Omega MIND" data-m="50">Fidget $50</button>
+    <button type="button" data-p="Spinner de Engranajes" data-m="100">Spinner $100</button>
+    <button type="button" data-p="Cubito Fidget" data-m="70">Cubito $70</button>
+    <button type="button" data-p="Pelota antiestrés" data-m="20">Pelota $20</button>
+    <button type="button" data-p="Squishy" data-m="10">Squishy $10</button>
+    <button type="button" data-p="Pop-it" data-m="10">Pop-it $10</button>
+    <button type="button" data-p="Stickers" data-m="10">Stickers $10</button>
+  </div>
+  <div class="fila">
+    <div><label for="metodo">Método</label>
+      <select id="metodo" name="metodo" required>
+        <option value="efectivo">Efectivo</option>
+        <option value="revolut">Revolut / SPEI</option>
+      </select></div>
+    <div><label for="monto">Monto (MXN)</label>
+      <input id="monto" name="monto" type="number" step="0.01" min="0.01" inputmode="decimal" required placeholder="50.00"></div>
+  </div>
+  <div><label for="concepto">Concepto</label>
+    <input id="concepto" name="concepto" required placeholder="Fidget Omega MIND" maxlength="80"></div>
+  <div class="fila">
+    <div><label for="detalle">¿De quién? (opcional)</label>
+      <input id="detalle" name="detalle" placeholder="Nombre del comprador" maxlength="80"></div>
+    <div><label for="evento">Evento</label>
+      <input id="evento" name="evento" value="ventas" maxlength="40"></div>
+  </div>
+  <div class="fila">
+    <div><label for="fecha">Fecha</label>
+      <input id="fecha" name="fecha" type="date" required></div>
+  </div>
+  <button type="submit">Agregar movimiento</button>
+</form>
+<script>
+  document.getElementById('fecha').value = new Date().toLocaleDateString('sv-SE');
+  for (const b of document.querySelectorAll('.rapidos button')) {
+    b.addEventListener('click', () => {
+      document.getElementById('concepto').value = b.dataset.p;
+      document.getElementById('monto').value = b.dataset.m;
+    });
+  }
+</script>
+
 <h2>Recaudado por evento (bruto)</h2>
 <div class="tabla-scroll"><table><tr><th>Evento</th><th class="num">Total</th></tr>${porEvento}</table></div>
 <h2>Movimientos</h2>

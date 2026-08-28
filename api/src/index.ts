@@ -7,7 +7,8 @@ import cors from "cors";
 import Stripe from "stripe";
 import { z } from "zod";
 import { PRODUCTS, byId } from "./products";
-import { leerCSV, movsStripe, renderCuentas, renderCSV } from "./cuentas";
+import { leerCSV, movsStripe, renderCuentas, renderCSV, agregarMov,
+         hayDiscoPersistente } from "./cuentas";
 
 const app = express();
 app.use(cors());
@@ -85,9 +86,14 @@ app.post("/api/checkout", async (req, res) => {
 });
 
 // Estado de cuenta del grupo, protegido con clave simple (CUENTAS_CLAVE)
-async function cuentasHandler(req: express.Request, res: express.Response, csv: boolean) {
+const claveOk = (req: express.Request) => {
   const clave = process.env.CUENTAS_CLAVE;
-  if (!clave || req.query.clave !== clave) {
+  return Boolean(clave) && req.query.clave === clave;
+};
+
+async function cuentasHandler(req: express.Request, res: express.Response,
+                              csv: boolean, aviso?: string) {
+  if (!claveOk(req)) {
     return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
   }
   const manuales = leerCSV();
@@ -96,11 +102,37 @@ async function cuentasHandler(req: express.Request, res: express.Response, csv: 
   if (csv) {
     res.type("text/csv").send(renderCSV(movs));
   } else {
-    res.type("html").send(renderCuentas(movs, st.ok));
+    res.type("html").send(renderCuentas(movs, st.ok, String(req.query.clave), aviso));
   }
 }
-app.get("/cuentas", (req, res) => { void cuentasHandler(req, res, false); });
+app.get("/cuentas", (req, res) => {
+  const ok = req.query.ok ? String(req.query.ok).slice(0, 120) : undefined;
+  void cuentasHandler(req, res, false, ok);
+});
 app.get("/cuentas.csv", (req, res) => { void cuentasHandler(req, res, true); });
+
+const MovSchema = z.object({
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  metodo: z.enum(["efectivo", "revolut"]),
+  concepto: z.string().min(1).max(80),
+  monto: z.coerce.number().positive().max(100000),
+  detalle: z.string().max(80).optional().default(""),
+  evento: z.string().max(40).optional().default("ventas"),
+});
+
+app.post("/cuentas/nuevo", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const parsed = MovSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).send("Datos inválidos. Regresa y revisa el formulario.");
+  if (!hayDiscoPersistente()) {
+    return res.status(503).send("No hay disco persistente configurado; el movimiento no se guardó.");
+  }
+  const m = parsed.data;
+  agregarMov({ fecha: m.fecha, evento: m.evento, metodo: m.metodo,
+               concepto: m.concepto, monto: m.monto, detalle: m.detalle });
+  const ok = `✓ Registrado: ${m.concepto} · $${m.monto.toFixed(2)} (${m.metodo})`;
+  res.redirect(`/cuentas?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(ok)}`);
+});
 
 // build web de Expo (app/dist) en producción
 const dist = path.resolve(__dirname, "../../app/dist");
