@@ -26,6 +26,10 @@ export function leerCSV(): Mov[] {
   });
 }
 
+// La cuenta de Stripe puede tener cargos anteriores a la tienda (p. ej. uno del
+// 8-jul-2026) que NO son ventas de MIND: solo contamos desde el lanzamiento.
+const DESDE_TIENDA = "2026-08-24";
+
 let cacheStripe: { t: number; movs: Mov[] } | null = null;
 
 export async function movsStripe(stripe: Stripe | null): Promise<{ movs: Mov[]; ok: boolean }> {
@@ -40,15 +44,18 @@ export async function movsStripe(stripe: Stripe | null): Promise<{ movs: Mov[]; 
       .map((c) => {
         const bt = c.balance_transaction as Stripe.BalanceTransaction | null;
         const fecha = new Date(c.created * 1000).toISOString().slice(0, 10);
-        const evento = fecha >= "2026-08-21" && fecha <= "2026-08-27" ? "REDSPOT" : "online";
+        const evento = fecha >= "2026-08-24" && fecha <= "2026-08-28" ? "REDSPOT" : "online";
+        const quien = c.billing_details?.name ?? c.billing_details?.email ?? "";
+        const last4 = c.payment_method_details?.card?.last4;
         return {
           fecha, evento, metodo: "stripe",
           concepto: "Venta con tarjeta",
           monto: c.amount / 100,
           comision: bt && typeof bt === "object" ? bt.fee / 100 : 0,
-          detalle: `${c.receipt_email ?? ""} ${c.payment_method_details?.card?.last4 ? "•" + c.payment_method_details.card.last4 : ""} ${c.id}`.trim(),
+          detalle: [quien, last4 ? "•" + last4 : ""].filter(Boolean).join(" · "),
         };
-      });
+      })
+      .filter((m) => m.fecha >= DESDE_TIENDA);
     cacheStripe = { t: Date.now(), movs };
     return { movs, ok: true };
   } catch (err) {
