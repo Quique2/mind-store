@@ -38,6 +38,18 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   cargos previos que no son ventas de MIND.
 - Routine semanal "Cuentas MIND" (lunes 9:00 MX) revisa la página y reporta.
 
+## Asistencia a eventos
+- Sustituye a Google Forms: `api/src/eventos.ts` guarda `/data/eventos.json` y
+  `/data/asistencias.json` (mismo volumen que cuentas). Sin API externa ni OAuth.
+- `/eventos?clave=...` (misma `CUENTAS_CLAVE`): un botón por tipo (Happy Midweek,
+  Stand, NeurArt, NeuroCharla) crea el evento y su enlace público; cada fila trae
+  WhatsApp / Copiar / QR / Cerrar. Filtros por nombre-matrícula, tipo y evento con
+  ranking de quién más asiste. `/eventos.csv?clave=...` exporta todo (abre en Sheets).
+- `/asistencia/:id` — formulario público (nombre + matrícula); una matrícula solo
+  cuenta una vez por evento; honeypot `sitio` contra bots. `/asistencia/:id/qr`
+  muestra el QR para proyectar o imprimir.
+- Las rutas nuevas van SIEMPRE antes del `app.get("*")` del SPA.
+
 ## Desarrollo
 ```
 npm install

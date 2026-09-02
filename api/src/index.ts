@@ -9,6 +9,10 @@ import { z } from "zod";
 import { PRODUCTS, byId } from "./products";
 import { leerCSV, movsStripe, renderCuentas, renderCSV, agregarMov, borrarMov,
          hayDiscoPersistente } from "./cuentas";
+import QRCode from "qrcode";
+import { leerEventos, leerAsistencias, crearEvento, alternarEvento, buscarEvento, registrar,
+         normMatricula, esTipo, renderAdmin, renderFormulario, renderResultado, renderQR,
+         renderCSV as renderAsistenciaCSV, type TipoId } from "./eventos";
 
 const app = express();
 app.use(cors());
@@ -141,6 +145,83 @@ app.post("/cuentas/borrar", express.urlencoded({ extended: false }), (req, res) 
   const concepto = borrarMov(idx);
   const msg = concepto ? `✓ Borrado: ${concepto}` : "No se encontró ese movimiento.";
   res.redirect(`/cuentas?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(msg)}`);
+});
+
+// ---------------- Asistencia a eventos (happy midweek, stand, neurart, neurocharla) ----------------
+const urlBase = (req: express.Request) =>
+  process.env.PUBLIC_URL ?? `${req.protocol}://${req.get("host")}`;
+const volverEventos = (req: express.Request, aviso: string) =>
+  `/eventos?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(aviso)}`;
+const idOk = (id: string) => /^[a-z0-9_-]{4,12}$/i.test(id);
+
+app.get("/eventos", (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
+  const ok = req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
+  res.type("html").send(renderAdmin(leerEventos(), leerAsistencias(), String(req.query.clave),
+                                    urlBase(req), ok));
+});
+
+app.get("/eventos.csv", (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  res.type("text/csv").attachment("asistencia-mind.csv")
+     .send(renderAsistenciaCSV(leerEventos(), leerAsistencias()));
+});
+
+const EventoSchema = z.object({
+  tipo: z.string().refine(esTipo, "tipo desconocido"),
+  titulo: z.string().max(80).optional().default(""),
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+app.post("/eventos/nuevo", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const parsed = EventoSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).send("Datos inválidos. Regresa y revisa el formulario.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; el evento no se guardó.");
+  const ev = crearEvento(parsed.data.tipo as TipoId, parsed.data.titulo, parsed.data.fecha);
+  res.redirect(volverEventos(req, `✓ Evento creado: ${ev.titulo} → ${urlBase(req)}/asistencia/${ev.id}`));
+});
+
+app.post("/eventos/alternar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const id = String((req.body as { id?: string }).id ?? "");
+  const ev = idOk(id) ? alternarEvento(id) : null;
+  res.redirect(volverEventos(req, ev
+    ? `✓ ${ev.titulo}: registro ${ev.abierto ? "reabierto" : "cerrado"}`
+    : "No se encontró ese evento."));
+});
+
+// formulario público (sin clave): nombre + matrícula
+app.get("/asistencia/:id", (req, res) => {
+  const ev = idOk(req.params.id) ? buscarEvento(req.params.id) : undefined;
+  if (!ev) return res.status(404).send("Ese evento no existe.");
+  res.type("html").send(renderFormulario(ev));
+});
+
+const AsisSchema = z.object({
+  nombre: z.string().trim().min(3).max(80),
+  matricula: z.string().trim().min(4).max(14),
+  sitio: z.string().max(0).optional().default(""),   // honeypot: los bots lo llenan
+});
+app.post("/asistencia/:id", express.urlencoded({ extended: false }), (req, res) => {
+  const ev = idOk(req.params.id) ? buscarEvento(req.params.id) : undefined;
+  if (!ev) return res.status(404).send("Ese evento no existe.");
+  const parsed = AsisSchema.safeParse(req.body);
+  if (!parsed.success || normMatricula(parsed.data.matricula).length < 4) {
+    return res.status(400).type("html")
+      .send(renderFormulario(ev, "Revisa tu nombre y matrícula (p. ej. A01234567)."));
+  }
+  const r = registrar(ev.id, parsed.data.nombre, parsed.data.matricula);
+  if (r === "no-existe") return res.status(404).send("Ese evento no existe.");
+  res.type("html").send(renderResultado(ev, r, parsed.data.nombre));
+});
+
+app.get("/asistencia/:id/qr", async (req, res) => {
+  const ev = idOk(req.params.id) ? buscarEvento(req.params.id) : undefined;
+  if (!ev) return res.status(404).send("Ese evento no existe.");
+  const url = `${urlBase(req)}/asistencia/${ev.id}`;
+  const svg = await QRCode.toString(url, { type: "svg", errorCorrectionLevel: "Q", margin: 1,
+                                           color: { dark: "#1C2260", light: "#ffffff" } });
+  res.type("html").send(renderQR(ev, svg, url));
 });
 
 // build web de Expo (app/dist) en producción
