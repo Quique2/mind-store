@@ -4,7 +4,7 @@
 import type { Mov } from "./cuentas";
 import { TIPOS, fechaBonita, esStaff, type Evento, type Asistencia, type TipoId } from "./eventos";
 import type { Product } from "./products";
-import { NAV_CSS, navAdmin } from "./ui";
+import { NAV_CSS, navAdmin, LINKTREE, INSTAGRAM, WHATSAPP_GRUPO } from "./ui";
 
 export interface DatosPanel {
   movs: Mov[];
@@ -204,6 +204,11 @@ input:focus { outline:2px solid #2E4BC6; outline-offset:1px; border-color:#2E4BC
 .btn.sec { background:#EFEDDF; color:#1C2260; border:1.5px solid #DDD9C6; font-weight:600; font-size:13px; }
 .btn.sec:hover { background:#E2DFCB; }
 .btn.peligro { color:#A03434; background:#FBECEC; border-color:#F0CFCF; } .btn.peligro:hover { background:#F5D9D9; }
+.accesos { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+.accesos a { font-size:13px; font-weight:700; color:#1C2260; text-decoration:none; background:#fff; border:1px solid #E4E1D2; border-radius:999px; padding:9px 14px; display:inline-flex; align-items:center; gap:6px; }
+.accesos a:hover { border-color:#2E4BC6; color:#2E4BC6; }
+.accesos a.principal { background:linear-gradient(120deg,#29A3C7,#2E4BC6); color:#fff; border:none; }
+.accesos a.principal:hover { filter:brightness(1.08); }
 .puntos { display:flex; gap:8px; justify-content:center; margin-top:28px; }
 .puntos i { width:9px; height:9px; border-radius:50%; display:block; }
 footer { font-size:11.5px; color:#8A8FB5; margin-top:14px; text-align:center; }
@@ -264,6 +269,12 @@ ${d.stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mi
   <div class="kpi"><small>Asistencias</small><b>${r.nAsis}</b><span>${d.eventos.length ? (r.nAsis / d.eventos.length).toFixed(1) : "0"} por evento · sin staff</span></div>
   <div class="kpi"><small>Personas distintas</small><b>${r.nPersonas}</b><span>matrículas únicas</span></div>
   <div class="kpi"><small>Staff</small><b>${r.nStaff}</b><span>${r.nStaffPersonas} persona${r.nStaffPersonas === 1 ? "" : "s"} de staff</span></div>
+</div>
+<div class="accesos">
+  <a class="principal" href="${LINKTREE}" target="_blank" rel="noopener">🔗 Linktree de MIND ↗</a>
+  <a href="/" target="_blank" rel="noopener">🛍️ Tienda ↗</a>
+  <a href="${INSTAGRAM}" target="_blank" rel="noopener">📸 @mindmty ↗</a>
+  <a href="${WHATSAPP_GRUPO}" target="_blank" rel="noopener">💬 Grupo de WhatsApp ↗</a>
 </div>
 
 <h2>💰 Dinero <small>efectivo ${fmt(r.metodos.efectivo)} · transferencia ${fmt(r.metodos.transferencia)} · tarjeta ${fmt(r.metodos.stripe)}</small></h2>

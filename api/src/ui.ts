@@ -15,5 +15,10 @@ export function navAdmin(clave: string, actual: "panel" | "cuentas" | "eventos")
   ];
   return `<nav class="nav-admin">${enlaces.map(([k, href, txt]) =>
     `<a href="${href}${q}"${k === actual ? ' class="actual"' : ""}>${txt}</a>`).join("")
-  }<a href="/" target="_blank" rel="noopener">🛍️ Tienda ↗</a></nav>`;
+  }<a href="/" target="_blank" rel="noopener">🛍️ Tienda ↗</a><a href="${LINKTREE}" target="_blank" rel="noopener">🔗 Linktree ↗</a></nav>`;
 }
+
+// enlaces públicos de MIND (los mismos que usa la página de enlaces)
+export const LINKTREE = "https://quique2.github.io/mind/";
+export const INSTAGRAM = "https://instagram.com/mindmty";
+export const WHATSAPP_GRUPO = "https://chat.whatsapp.com/JCP0jVXXtV7GHWBcrnv7wp";
