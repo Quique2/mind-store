@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { NAV_CSS, navAdmin } from "./ui";
 
 export interface Evento {
   id: string;
@@ -204,7 +205,7 @@ export function renderAdmin(evs: Evento[], asis: Asistencia[], clave: string,
     `<button class="crear" type="submit" name="tipo" value="${t}" style="background:${TIPOS[t].color};color:${TIPOS[t].tinta}">${TIPOS[t].emoji} ${TIPOS[t].nombre}</button>`).join("");
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Eventos MIND</title>${FUENTE}
-<style>${CSS_BASE}
+<style>${CSS_BASE}${NAV_CSS}
 .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin:16px 0; }
 .stat { background:#fff; border:1px solid #E4E1D2; border-radius:14px; padding:12px 14px; }
 .stat small { font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#6A6F98; }
@@ -229,7 +230,7 @@ tr:last-child td { border-bottom:none; }
 @media (max-width:640px){ .filtros { grid-template-columns:1fr; } }
 .vacio { color:#8A8FB5; font-size:13px; padding:12px; }
 </style></head><body>
-<header><h1>Eventos MIND</h1><p>Crea el evento, comparte el enlace, y la asistencia se registra sola</p></header>
+<header>${navAdmin(clave, "eventos")}<h1>Eventos MIND</h1><p>Crea el evento, comparte el enlace, y la asistencia se registra sola</p></header>
 <main>
 ${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
 <div class="stats">

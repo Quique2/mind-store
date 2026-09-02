@@ -7,6 +7,7 @@ export interface Producto {
   nombre: string;
   descripcion: string;
   precioCentavos: number;
+  emoji?: string;
 }
 
 interface CartState {

@@ -6,7 +6,9 @@ import express from "express";
 import cors from "cors";
 import Stripe from "stripe";
 import { z } from "zod";
-import { PRODUCTS, byId } from "./products";
+import { catalogo, catalogoPublico, byId, guardarProducto, borrarProducto, restaurarCatalogo,
+         hayCatalogoEditado } from "./products";
+import { renderPanel } from "./admin";
 import { leerCSV, movsStripe, renderCuentas, renderCSV, agregarMov, borrarMov,
          hayDiscoPersistente } from "./cuentas";
 import QRCode from "qrcode";
@@ -23,7 +25,7 @@ const stripe = stripeKey ? new Stripe(stripeKey) : null;
 
 app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
-app.get("/api/products", (_req, res) => res.json(PRODUCTS));
+app.get("/api/products", (_req, res) => res.json(catalogoPublico()));
 
 // Datos para transferencia SPEI directa (sin intermediarios). La CLABE es dato
 // público de cobro (solo permite depositar); las env vars la pueden sustituir.
@@ -106,7 +108,7 @@ async function cuentasHandler(req: express.Request, res: express.Response,
   if (csv) {
     res.type("text/csv").send(renderCSV(movs));
   } else {
-    res.type("html").send(renderCuentas(movs, st.ok, String(req.query.clave), aviso));
+    res.type("html").send(renderCuentas(movs, st.ok, String(req.query.clave), aviso, catalogo()));
   }
 }
 app.get("/cuentas", (req, res) => {
@@ -145,6 +147,55 @@ app.post("/cuentas/borrar", express.urlencoded({ extended: false }), (req, res) 
   const concepto = borrarMov(idx);
   const msg = concepto ? `✓ Borrado: ${concepto}` : "No se encontró ese movimiento.";
   res.redirect(`/cuentas?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(msg)}`);
+});
+
+// ---------------- Panel ejecutivo + catálogo editable ----------------
+app.get("/admin", async (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
+  const st = await movsStripe(stripe);
+  res.type("html").send(renderPanel({
+    movs: [...leerCSV(), ...st.movs], stripeOk: st.ok,
+    eventos: leerEventos(), asistencias: leerAsistencias(),
+    productos: catalogo(), editado: hayCatalogoEditado(),
+    clave: String(req.query.clave),
+    aviso: req.query.ok ? String(req.query.ok).slice(0, 200) : undefined,
+  }));
+});
+const volverAdmin = (req: express.Request, aviso: string) =>
+  `/admin?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(aviso)}#productos`;
+
+const ProductoSchema = z.object({
+  id: z.string().max(40).optional().default(""),
+  nombre: z.string().trim().min(2).max(60),
+  descripcion: z.string().trim().max(160).optional().default(""),
+  precio: z.coerce.number().min(1).max(100000),
+  emoji: z.string().trim().max(8).optional().default(""),
+  orden: z.coerce.number().int().min(0).max(999).optional().default(0),
+  disponible: z.string().optional(),            // checkbox: "on" o ausente
+});
+app.post("/admin/productos/guardar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const parsed = ProductoSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).send("Datos inválidos. Regresa y revisa el formulario.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; el catálogo no se guardó.");
+  const p = parsed.data;
+  const { producto, nuevo } = guardarProducto({
+    id: p.id || undefined, nombre: p.nombre, descripcion: p.descripcion,
+    precioCentavos: Math.round(p.precio * 100), emoji: p.emoji || undefined,
+    orden: p.orden, disponible: p.disponible === "on",
+  });
+  res.redirect(volverAdmin(req, `✓ ${nuevo ? "Agregado" : "Guardado"}: ${producto.nombre} · ${(producto.precioCentavos / 100).toFixed(2)}${producto.disponible === false ? " (oculto)" : ""}`));
+});
+app.post("/admin/productos/borrar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; el catálogo no se guardó.");
+  const quitado = borrarProducto(String((req.body as { id?: string }).id ?? ""));
+  res.redirect(volverAdmin(req, quitado ? `✓ Quitado de la tienda: ${quitado.nombre}` : "No se encontró ese producto."));
+});
+app.post("/admin/productos/restaurar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  restaurarCatalogo();
+  res.redirect(volverAdmin(req, "✓ Catálogo original restaurado."));
 });
 
 // ---------------- Asistencia a eventos (happy midweek, stand, neurart, neurocharla) ----------------

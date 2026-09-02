@@ -50,6 +50,18 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   muestra el QR para proyectar o imprimir.
 - Las rutas nuevas van SIEMPRE antes del `app.get("*")` del SPA.
 
+## Panel ejecutivo y catálogo editable
+- `/admin?clave=...` (`api/src/admin.ts`): KPIs + 7 gráficas (Chart.js desde cdnjs):
+  ingresos por semana por método, saldo acumulado, recaudado por evento, ventas por
+  producto (el concepto capturado se mapea al catálogo por nombre/alias), asistencia
+  por evento, por tipo, nuevos vs recurrentes; ranking de asistentes, últimos
+  movimientos y eventos recientes. Todo se calcula en el servidor (`calcular`).
+- Catálogo: `PRODUCTOS_BASE` en `api/src/products.ts` es el de git; al editar desde
+  /admin se escribe `/data/productos.json` y ESE manda (precios, altas, bajas, ocultar,
+  orden, emoji para productos sin ícono SVG en la app). `catalogoPublico()` es lo que
+  ve la tienda y el checkout; `/admin/productos/restaurar` vuelve al de git.
+- Los botones rápidos de /cuentas se generan del catálogo. Navegación común
+  Panel · Cuentas · Eventos en `api/src/ui.ts`.
 ## Desarrollo
 ```
 npm install
@@ -57,7 +69,7 @@ npm run dev:api          # API en :3000
 npm run dev:app          # Expo web (define EXPO_PUBLIC_API_URL=http://localhost:3000)
 ```
 
-## Precios actuales (definidos por el grupo, agosto 2026)
+## Precios base (definidos por el grupo, agosto 2026; los vigentes se editan en /admin)
 - Fidget Omega MIND: $50 MXN
 - Spinner de Engranajes: $100 MXN
 - Cubito Fidget: $70 MXN

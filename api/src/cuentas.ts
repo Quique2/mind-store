@@ -4,6 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type Stripe from "stripe";
+import type { Product } from "./products";
+import { NAV_CSS, navAdmin } from "./ui";
 
 export interface Mov {
   fecha: string;
@@ -126,7 +128,10 @@ const esc = (s: string) =>
            .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 export function renderCuentas(movs: Mov[], stripeOk: boolean,
-                              clave: string, aviso?: string): string {
+                              clave: string, aviso?: string,
+                              productos: Product[] = []): string {
+  const rapidos = productos.filter((p) => p.disponible !== false).map((p) =>
+    `<button type="button" data-p="${esc(p.nombre)}" data-m="${p.precioCentavos / 100}">${esc(p.nombre)} $${p.precioCentavos / 100}</button>`).join("\n    ");
   const orden = [...movs].sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
   const suma = (f: (m: Mov) => boolean) =>
     movs.filter(f).reduce((s, m) => s + m.monto - m.comision, 0);
@@ -195,8 +200,8 @@ footer { font-size:11.5px; color:#8A8FB5; margin-top:26px; }
 td.acc { padding:6px 8px; width:38px; }
 button.del { font:inherit; font-size:13px; line-height:1; color:#A03434; background:#FBECEC; border:1px solid #F0CFCF; border-radius:8px; width:30px; height:30px; cursor:pointer; }
 button.del:hover { background:#F5D9D9; }
-</style></head><body>
-<header><h1>Cuentas MIND</h1><p>Estado de cuenta del grupo · Stripe en vivo · efectivo y Revolut auditados en git</p></header>
+${NAV_CSS}</style></head><body>
+<header>${navAdmin(clave, "cuentas")}<h1>Cuentas MIND</h1><p>Estado de cuenta del grupo · Stripe en vivo · efectivo y Revolut auditados en git</p></header>
 <main>
 ${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
 ${stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mismo — se muestran solo efectivo y Revolut.</div>'}
@@ -209,13 +214,7 @@ ${stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mism
 <h2>Registrar efectivo o Revolut</h2>
 <form class="nuevo" method="post" action="/cuentas/nuevo?clave=${encodeURIComponent(clave)}">
   <div class="rapidos">
-    <button type="button" data-p="Fidget Omega MIND" data-m="50">Fidget $50</button>
-    <button type="button" data-p="Spinner de Engranajes" data-m="100">Spinner $100</button>
-    <button type="button" data-p="Cubito Fidget" data-m="70">Cubito $70</button>
-    <button type="button" data-p="Pelota antiestrés" data-m="20">Pelota $20</button>
-    <button type="button" data-p="Squishy" data-m="10">Squishy $10</button>
-    <button type="button" data-p="Pop-it" data-m="10">Pop-it $10</button>
-    <button type="button" data-p="Stickers" data-m="10">Stickers $10</button>
+    ${rapidos}
   </div>
   <div class="fila">
     <div><label for="metodo">Método</label>

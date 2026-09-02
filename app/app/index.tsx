@@ -26,7 +26,8 @@ const TILE_COLOR: Record<string, string> = {
   stickers: "#F59E0B",
 };
 
-function IconoProducto({ id }: { id: string }) {
+function IconoProducto({ id, emoji }: { id: string; emoji?: string }) {
+  if (emoji) return <Text style={{ fontSize: 34 }}>{emoji}</Text>;
   const base = { width: 52, height: 52, viewBox: "0 0 52 52", fill: "none" as const,
                  stroke: "#fff", strokeWidth: 2.6 };
   switch (id) {
@@ -177,7 +178,7 @@ export default function Tienda() {
             return (
               <View key={p.id} style={styles.tarjeta}>
                 <View style={[styles.tile, { backgroundColor: TILE_COLOR[p.id] ?? Colors.teal }]}>
-                  <IconoProducto id={p.id} />
+                  <IconoProducto id={p.id} emoji={p.emoji} />
                 </View>
                 <View style={styles.info}>
                   <Text style={styles.nombre}>{p.nombre}</Text>
