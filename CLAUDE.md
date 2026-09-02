@@ -48,6 +48,13 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
 - `/asistencia/:id` — formulario público (nombre + matrícula); una matrícula solo
   cuenta una vez por evento; honeypot `sitio` contra bots. `/asistencia/:id/qr`
   muestra el QR para proyectar o imprimir.
+- Campo `staff` en la asistencia (radio en el formulario; registros sin el campo =
+  asistente normal). Eventos, CSV y Panel cuentan al staff aparte (no infla
+  asistencia ni ranking); filtro "Solo asistentes / Solo staff / ambos" en /eventos.
+- Borrar evento: `GET /eventos/borrar?id=` muestra la pantalla "¿Estás seguro?";
+  `POST /eventos/borrar` con `confirmar=si` borra el evento y sus asistencias.
+  Doble clic al crear: el formulario se bloquea y `crearEvento` devuelve el evento
+  idéntico creado en los últimos 2 min en vez de duplicarlo.
 - Las rutas nuevas van SIEMPRE antes del `app.get("*")` del SPA.
 
 ## Panel ejecutivo y catálogo editable

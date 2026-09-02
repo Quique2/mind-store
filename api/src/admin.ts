@@ -2,7 +2,7 @@
 // y edición del catálogo (precios, altas, bajas, ocultar). Los números se
 // calculan aquí en el servidor; Chart.js solo los pinta en el navegador.
 import type { Mov } from "./cuentas";
-import { TIPOS, fechaBonita, type Evento, type Asistencia, type TipoId } from "./eventos";
+import { TIPOS, fechaBonita, esStaff, type Evento, type Asistencia, type TipoId } from "./eventos";
 import type { Product } from "./products";
 import { NAV_CSS, navAdmin } from "./ui";
 
@@ -103,24 +103,28 @@ export function calcular(d: DatosPanel) {
   const porEvento = agrupar((m) => m.evento);
   const porProducto = agrupar((m) => productoDe(m.concepto, d.productos) ?? "Sin desglose");
 
-  // asistencia: por evento (cronológico) con nuevos vs recurrentes, por tipo, ranking
+  // asistencia: por evento (cronológico) con nuevos vs recurrentes, por tipo, ranking.
+  // El staff se cuenta aparte: no infla la asistencia ni el ranking.
+  const asis = d.asistencias.filter((a) => !esStaff(a));
+  const staff = d.asistencias.filter(esStaff);
   const evIdx = new Map(d.eventos.map((e) => [e.id, e]));
   const evOrden = [...d.eventos].sort((a, b) =>
     a.fecha === b.fecha ? (a.creado < b.creado ? -1 : 1) : (a.fecha < b.fecha ? -1 : 1));
   const vistos = new Set<string>();
   const asistenciaEventos = evOrden.map((e) => {
-    const lista = d.asistencias.filter((a) => a.evento === e.id);
+    const lista = asis.filter((a) => a.evento === e.id);
     let nuevos = 0;
     for (const a of lista) if (!vistos.has(a.matricula)) { nuevos++; vistos.add(a.matricula); }
     return { titulo: e.titulo, corto: fechaBonita(e.fecha), emoji: TIPOS[e.tipo].emoji,
-             total: lista.length, nuevos, recurrentes: lista.length - nuevos, color: TIPOS[e.tipo].color };
+             total: lista.length, nuevos, recurrentes: lista.length - nuevos, color: TIPOS[e.tipo].color,
+             staff: staff.filter((a) => a.evento === e.id).length };
   });
   const porTipo = (Object.keys(TIPOS) as TipoId[]).map((t) => ({
     label: `${TIPOS[t].emoji} ${TIPOS[t].nombre}`, color: TIPOS[t].color,
-    y: d.asistencias.filter((a) => evIdx.get(a.evento)?.tipo === t).length,
+    y: asis.filter((a) => evIdx.get(a.evento)?.tipo === t).length,
   }));
   const personas = new Map<string, { nombre: string; mat: string; evs: Set<string>; tipos: Set<TipoId> }>();
-  for (const a of d.asistencias) {
+  for (const a of asis) {
     const p = personas.get(a.matricula) ?? { nombre: a.nombre, mat: a.matricula, evs: new Set(), tipos: new Set() };
     p.evs.add(a.evento);
     const e = evIdx.get(a.evento);
@@ -134,6 +138,8 @@ export function calcular(d: DatosPanel) {
   return { total, metodos, ingresos30, nVentas: ventas.length,
            ticket: ventas.length ? bruto / ventas.length : 0,
            semanas, saldo, porEvento, porProducto, asistenciaEventos, porTipo, top,
+           nAsis: asis.length, nStaff: staff.length,
+           nStaffPersonas: new Set(staff.map((a) => a.matricula)).size,
            nPersonas: personas.size, abiertos: d.eventos.filter((e) => e.abierto).length,
            ultimos: [...ventas].sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).slice(0, 8),
            evRecientes: [...evOrden].reverse().slice(0, 6) };
@@ -233,7 +239,7 @@ export function renderPanel(d: DatosPanel): string {
   const q = `?clave=${encodeURIComponent(d.clave)}`;
   const clase = (m: Mov) => (["efectivo", "revolut", "spei", "stripe"].includes(m.metodo) ? m.metodo : "otro");
   const conteo = new Map<string, number>();
-  for (const a of d.asistencias) conteo.set(a.evento, (conteo.get(a.evento) ?? 0) + 1);
+  for (const a of d.asistencias) if (!esStaff(a)) conteo.set(a.evento, (conteo.get(a.evento) ?? 0) + 1);
   const badge = (t: TipoId) =>
     `<span class="tipo" style="background:${TIPOS[t].color};color:${TIPOS[t].tinta}">${TIPOS[t].emoji} ${TIPOS[t].nombre}</span>`;
   const datosJS = {
@@ -255,8 +261,9 @@ ${d.stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mi
   <div class="kpi"><small>Últimos 30 días</small><b>${fmt(r.ingresos30)}</b><span>ingresos netos</span></div>
   <div class="kpi"><small>Movimientos</small><b>${r.nVentas}</b><span>ticket promedio ${fmt(r.ticket)}</span></div>
   <div class="kpi"><small>Eventos</small><b>${d.eventos.length}</b><span>${r.abiertos} con registro abierto</span></div>
-  <div class="kpi"><small>Asistencias</small><b>${d.asistencias.length}</b><span>${d.eventos.length ? (d.asistencias.length / d.eventos.length).toFixed(1) : "0"} por evento</span></div>
+  <div class="kpi"><small>Asistencias</small><b>${r.nAsis}</b><span>${d.eventos.length ? (r.nAsis / d.eventos.length).toFixed(1) : "0"} por evento · sin staff</span></div>
   <div class="kpi"><small>Personas distintas</small><b>${r.nPersonas}</b><span>matrículas únicas</span></div>
+  <div class="kpi"><small>Staff</small><b>${r.nStaff}</b><span>${r.nStaffPersonas} persona${r.nStaffPersonas === 1 ? "" : "s"} de staff</span></div>
 </div>
 
 <h2>💰 Dinero <small>efectivo ${fmt(r.metodos.efectivo)} · transferencia ${fmt(r.metodos.transferencia)} · tarjeta ${fmt(r.metodos.stripe)}</small></h2>
@@ -271,12 +278,12 @@ ${d.stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mi
 
 <h2>🎟️ Eventos y asistencia</h2>
 <div class="grid2">
-  <div class="graf"><h3>Asistencia por evento</h3><div class="lienzo"><canvas id="c-asis"></canvas></div></div>
-  <div class="graf"><h3>Por tipo de evento</h3><div class="lienzo"><canvas id="c-tipos"></canvas></div></div>
+  <div class="graf"><h3>Asistencia por evento <small>asistentes y staff</small></h3><div class="lienzo"><canvas id="c-asis"></canvas></div></div>
+  <div class="graf"><h3>Por tipo de evento <small>sin staff</small></h3><div class="lienzo"><canvas id="c-tipos"></canvas></div></div>
 </div>
 <div class="grid2">
   <div class="graf"><h3>Nuevos vs. recurrentes <small>¿la gente regresa?</small></h3><div class="lienzo"><canvas id="c-retencion"></canvas></div></div>
-  <div class="graf"><h3>Quienes más asisten</h3>
+  <div class="graf"><h3>Quienes más asisten <small>sin staff</small></h3>
     ${r.top.length ? `<table class="rank"><tr><th>#</th><th>Persona</th><th class="num">Eventos</th><th>Tipos</th></tr>${
       r.top.map((p, i) => `<tr><td>${i + 1}</td><td>${esc(p.nombre)}<div class="det">${esc(p.mat)}</div></td><td class="num">${p.evs.size}</td><td>${[...p.tipos].map(badge).join(" ")}</td></tr>`).join("")
     }</table>` : '<p class="vacio">Aún no hay asistencias registradas.</p>'}</div>
@@ -345,9 +352,11 @@ if (typeof Chart === 'undefined') {
     options: { ...base, cutout: '58%', plugins: { ...leyenda('bottom'), tooltip: { callbacks: { label: (t) => t.label + ': ' + mxn(t.raw) } } } } });
   if ((c = sinDatos('c-asis', !D.asistenciaEventos.length))) new Chart(c, { type: 'bar',
     data: { labels: D.asistenciaEventos.map((e) => [e.corto, e.emoji + ' ' + e.titulo.slice(0, 22)]),
-      datasets: [{ data: D.asistenciaEventos.map((e) => e.total), backgroundColor: D.asistenciaEventos.map((e) => e.color), borderRadius: 6 }] },
-    options: { ...base, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { precision: 0 } } },
-      plugins: { legend: { display: false }, tooltip: { callbacks: { title: (t) => D.asistenciaEventos[t[0].dataIndex].titulo, label: (t) => t.raw + ' asistentes' } } } } });
+      datasets: [
+        { label: 'Asistentes', data: D.asistenciaEventos.map((e) => e.total), backgroundColor: D.asistenciaEventos.map((e) => e.color), borderRadius: 6 },
+        { label: 'Staff', data: D.asistenciaEventos.map((e) => e.staff), backgroundColor: '#C9CCE0', borderRadius: 6 } ] },
+    options: { ...base, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } },
+      plugins: { ...leyenda('bottom'), tooltip: { callbacks: { title: (t) => D.asistenciaEventos[t[0].dataIndex].titulo, label: (t) => t.dataset.label + ': ' + t.raw } } } } });
   if ((c = sinDatos('c-tipos', !D.porTipo.some((t) => t.y)))) new Chart(c, { type: 'doughnut',
     data: { labels: D.porTipo.map((t) => t.label), datasets: [{ data: D.porTipo.map((t) => t.y), backgroundColor: D.porTipo.map((t) => t.color), borderWidth: 2, borderColor: '#fff' }] },
     options: { ...base, cutout: '58%', plugins: leyenda('bottom') } });

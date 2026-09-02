@@ -14,7 +14,8 @@ import { leerCSV, movsStripe, renderCuentas, renderCSV, agregarMov, borrarMov,
 import QRCode from "qrcode";
 import { leerEventos, leerAsistencias, crearEvento, alternarEvento, buscarEvento, registrar,
          normMatricula, esTipo, renderAdmin, renderFormulario, renderResultado, renderQR,
-         renderCSV as renderAsistenciaCSV, type TipoId } from "./eventos";
+         renderCSV as renderAsistenciaCSV, borrarEvento, renderConfirmarBorrado, esStaff,
+         type TipoId } from "./eventos";
 
 const app = express();
 app.use(cors());
@@ -228,8 +229,34 @@ app.post("/eventos/nuevo", express.urlencoded({ extended: false }), (req, res) =
   const parsed = EventoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).send("Datos inválidos. Regresa y revisa el formulario.");
   if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; el evento no se guardó.");
-  const ev = crearEvento(parsed.data.tipo as TipoId, parsed.data.titulo, parsed.data.fecha);
-  res.redirect(volverEventos(req, `✓ Evento creado: ${ev.titulo} → ${urlBase(req)}/asistencia/${ev.id}`));
+  const { evento: ev, repetido } = crearEvento(parsed.data.tipo as TipoId, parsed.data.titulo, parsed.data.fecha);
+  const enlace = `${urlBase(req)}/asistencia/${ev.id}`;
+  res.redirect(volverEventos(req, repetido
+    ? `Ese evento ya se había creado hace un momento, no se duplicó: ${ev.titulo} → ${enlace}`
+    : `✓ Evento creado: ${ev.titulo} → ${enlace}`));
+});
+
+// borrar: primero la pantalla de confirmación (GET), luego el borrado real (POST con confirmar=si)
+app.get("/eventos/borrar", (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const id = String(req.query.id ?? "");
+  const ev = idOk(id) ? buscarEvento(id) : undefined;
+  if (!ev) return res.redirect(volverEventos(req, "No se encontró ese evento."));
+  const suyas = leerAsistencias().filter((a) => a.evento === id);
+  res.type("html").send(renderConfirmarBorrado(ev, suyas.length, suyas.filter(esStaff).length,
+                                               String(req.query.clave)));
+});
+app.post("/eventos/borrar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const b = req.body as { id?: string; confirmar?: string };
+  const id = String(b.id ?? "");
+  if (b.confirmar !== "si") {
+    return res.redirect(`/eventos/borrar?clave=${encodeURIComponent(String(req.query.clave))}&id=${encodeURIComponent(id)}`);
+  }
+  const r = idOk(id) ? borrarEvento(id) : null;
+  res.redirect(volverEventos(req, r
+    ? `✓ Borrado: ${r.evento.titulo} (${r.asistencias} registro${r.asistencias === 1 ? "" : "s"} de asistencia)`
+    : "No se encontró ese evento."));
 });
 
 app.post("/eventos/alternar", express.urlencoded({ extended: false }), (req, res) => {
@@ -251,6 +278,7 @@ app.get("/asistencia/:id", (req, res) => {
 const AsisSchema = z.object({
   nombre: z.string().trim().min(3).max(80),
   matricula: z.string().trim().min(4).max(14),
+  staff: z.enum(["si", "no"]).optional().default("no"),
   sitio: z.string().max(0).optional().default(""),   // honeypot: los bots lo llenan
 });
 app.post("/asistencia/:id", express.urlencoded({ extended: false }), (req, res) => {
@@ -261,9 +289,10 @@ app.post("/asistencia/:id", express.urlencoded({ extended: false }), (req, res) 
     return res.status(400).type("html")
       .send(renderFormulario(ev, "Revisa tu nombre y matrícula (p. ej. A01234567)."));
   }
-  const r = registrar(ev.id, parsed.data.nombre, parsed.data.matricula);
+  const staff = parsed.data.staff === "si";
+  const r = registrar(ev.id, parsed.data.nombre, parsed.data.matricula, staff);
   if (r === "no-existe") return res.status(404).send("Ese evento no existe.");
-  res.type("html").send(renderResultado(ev, r, parsed.data.nombre));
+  res.type("html").send(renderResultado(ev, r, parsed.data.nombre, staff));
 });
 
 app.get("/asistencia/:id/qr", async (req, res) => {

@@ -20,7 +20,9 @@ export interface Asistencia {
   nombre: string;
   matricula: string;    // normalizada en mayúsculas
   ts: string;           // ISO
+  staff?: boolean;      // ausente = asistente normal (registros anteriores al campo)
 }
+export const esStaff = (a: Asistencia) => a.staff === true;
 
 export const TIPOS = {
   happy:       { nombre: "Happy Midweek", color: "#F5C518", tinta: "#4a3a00", emoji: "🎉" },
@@ -47,18 +49,34 @@ function escribirJSON(f: string, data: unknown): void {
 export const leerEventos = () => leerJSON<Evento>(F_EV);
 export const leerAsistencias = () => leerJSON<Asistencia>(F_AS);
 
-export function crearEvento(tipo: TipoId, titulo: string, fecha: string): Evento {
+export function crearEvento(tipo: TipoId, titulo: string, fecha: string)
+    : { evento: Evento; repetido: boolean } {
   const evs = leerEventos();
+  const nombre = titulo.trim() || `${TIPOS[tipo].nombre} · ${fechaBonita(fecha)}`;
+  // doble clic o doble envío: si hace un momento se creó uno idéntico, se devuelve ese
+  const igual = evs.find((e) => e.tipo === tipo && e.fecha === fecha && e.titulo === nombre
+                               && Date.now() - Date.parse(e.creado) < 2 * 60 * 1000);
+  if (igual) return { evento: igual, repetido: true };
   let id = "";
   do { id = crypto.randomBytes(4).toString("base64url").slice(0, 6).toLowerCase(); }
   while (evs.some((e) => e.id === id));
-  const ev: Evento = {
-    id, tipo, fecha, abierto: true, creado: new Date().toISOString(),
-    titulo: titulo.trim() || `${TIPOS[tipo].nombre} · ${fechaBonita(fecha)}`,
-  };
+  const ev: Evento = { id, tipo, fecha, abierto: true, creado: new Date().toISOString(), titulo: nombre };
   evs.push(ev);
   escribirJSON(F_EV, evs);
-  return ev;
+  return { evento: ev, repetido: false };
+}
+
+/** Borra el evento y todas sus asistencias. Devuelve el evento y cuántas se fueron. */
+export function borrarEvento(id: string): { evento: Evento; asistencias: number } | null {
+  const evs = leerEventos();
+  const i = evs.findIndex((e) => e.id === id);
+  if (i < 0) return null;
+  const [evento] = evs.splice(i, 1);
+  const asis = leerAsistencias();
+  const quedan = asis.filter((a) => a.evento !== id);
+  escribirJSON(F_EV, evs);
+  escribirJSON(F_AS, quedan);
+  return { evento, asistencias: asis.length - quedan.length };
 }
 
 export function alternarEvento(id: string): Evento | null {
@@ -75,7 +93,7 @@ export function buscarEvento(id: string): Evento | undefined {
 }
 
 /** Registra asistencia. Devuelve 'ok' | 'duplicado' | 'cerrado' | 'no-existe'. */
-export function registrar(eventoId: string, nombre: string, matricula: string) {
+export function registrar(eventoId: string, nombre: string, matricula: string, staff = false) {
   const ev = buscarEvento(eventoId);
   if (!ev) return "no-existe" as const;
   if (!ev.abierto) return "cerrado" as const;
@@ -83,7 +101,7 @@ export function registrar(eventoId: string, nombre: string, matricula: string) {
   const lista = leerAsistencias();
   if (lista.some((a) => a.evento === eventoId && a.matricula === mat)) return "duplicado" as const;
   lista.push({ evento: eventoId, nombre: limpiar(nombre), matricula: mat,
-               ts: new Date().toISOString() });
+               ts: new Date().toISOString(), staff });
   escribirJSON(F_AS, lista);
   return "ok" as const;
 }
@@ -140,6 +158,11 @@ header { background:linear-gradient(140deg,${t.color},#2E4BC6 70%,#232D93); }
 main { max-width:460px; }
 form { display:grid; gap:14px; }
 .err { background:#FDE8E8; border:1px solid #F0B8B8; color:#8A2626; border-radius:10px; padding:10px 14px; font-size:13px; }
+.seg { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.seg input { position:absolute; opacity:0; width:0; height:0; min-height:0; }
+.seg label { text-transform:none; letter-spacing:0; font-size:14px; font-weight:600; color:#1C2260; background:#FCFBF5; border:1.5px solid #DDD9C6; border-radius:10px; padding:10px 8px; min-height:44px; margin:0; display:flex; align-items:center; justify-content:center; text-align:center; cursor:pointer; }
+.seg input:checked + label { background:#1C2260; color:#fff; border-color:#1C2260; }
+.seg input:focus-visible + label { outline:2px solid #2E4BC6; outline-offset:1px; }
 </style></head><body>
 <header><p>${t.emoji} ${esc(t.nombre)} · ${esc(fechaBonita(ev.fecha))}</p><h1>${esc(ev.titulo)}</h1>
 <p>Registra tu asistencia — toma 10 segundos</p></header>
@@ -151,6 +174,11 @@ ${error ? `<div class="err" style="margin-bottom:12px">${esc(error)}</div>` : ""
   <div><label for="matricula">Matrícula</label>
     <input id="matricula" name="matricula" required maxlength="12" placeholder="A0XXXXXXX"
       style="text-transform:uppercase" autocapitalize="characters" autocomplete="off"></div>
+  <div><label>¿Eres parte del staff de MIND?</label>
+    <div class="seg">
+      <input type="radio" id="st-no" name="staff" value="no" checked><label for="st-no">No, vengo al evento</label>
+      <input type="radio" id="st-si" name="staff" value="si"><label for="st-si">Sí, soy staff</label>
+    </div></div>
   <input type="text" name="sitio" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
   <button class="btn" type="submit">Registrar mi asistencia</button>
 </form></div>${PUNTOS}
@@ -158,10 +186,14 @@ ${error ? `<div class="err" style="margin-bottom:12px">${esc(error)}</div>` : ""
 </main></body></html>`;
 }
 
-export function renderResultado(ev: Evento, tipo: "ok" | "duplicado" | "cerrado", nombre: string): string {
+export function renderResultado(ev: Evento, tipo: "ok" | "duplicado" | "cerrado", nombre: string,
+                                staff = false): string {
   const t = TIPOS[ev.tipo];
-  const msg = tipo === "ok"
-    ? { h: "¡Registrado! 🎉", p: `Gracias por venir a <b>${esc(ev.titulo)}</b>, ${esc(nombre.split(" ")[0] || "")}.` }
+  const pila = esc(nombre.split(" ")[0] || "");
+  const msg = tipo === "ok" && staff
+    ? { h: "¡Registrado, staff! 💪", p: `Gracias por hacer posible <b>${esc(ev.titulo)}</b>, ${pila}.` }
+    : tipo === "ok"
+    ? { h: "¡Registrado! 🎉", p: `Gracias por venir a <b>${esc(ev.titulo)}</b>, ${pila}.` }
     : tipo === "duplicado"
     ? { h: "Ya estabas en la lista ✓", p: `Tu matrícula ya aparece en <b>${esc(ev.titulo)}</b>. ¡Gracias!` }
     : { h: "Registro cerrado", p: `<b>${esc(ev.titulo)}</b> ya cerró su lista de asistencia.` };
@@ -178,26 +210,32 @@ export function renderResultado(ev: Evento, tipo: "ok" | "duplicado" | "cerrado"
 export function renderAdmin(evs: Evento[], asis: Asistencia[], clave: string,
                             base: string, aviso?: string): string {
   const conteo = new Map<string, number>();
-  for (const a of asis) conteo.set(a.evento, (conteo.get(a.evento) ?? 0) + 1);
+  const conteoStaff = new Map<string, number>();
+  for (const a of asis) {
+    const m = esStaff(a) ? conteoStaff : conteo;
+    m.set(a.evento, (m.get(a.evento) ?? 0) + 1);
+  }
   const evOrden = [...evs].sort((a, b) => (a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0));
-  const personas = new Set(asis.map((a) => a.matricula)).size;
+  const publico = asis.filter((a) => !esStaff(a));
+  const personas = new Set(publico.map((a) => a.matricula)).size;
   const q = `?clave=${encodeURIComponent(clave)}`;
   const filasEv = evOrden.map((e) => {
     const url = `${base}/asistencia/${e.id}`;
     const wa = `https://wa.me/?text=${encodeURIComponent(`${TIPOS[e.tipo].emoji} ${e.titulo}\nRegistra tu asistencia aquí 👉 ${url}`)}`;
     return `<tr data-id="${esc(e.id)}"><td>${esc(fechaBonita(e.fecha))}</td><td>${badge(e.tipo)}</td>
 <td><b>${esc(e.titulo)}</b><div class="det"><code>${esc(url)}</code></div></td>
-<td class="num">${conteo.get(e.id) ?? 0}</td>
+<td class="num">${conteo.get(e.id) ?? 0}${conteoStaff.get(e.id) ? `<div class="det">+${conteoStaff.get(e.id)} staff</div>` : ""}</td>
 <td>${e.abierto ? '<span class="est abierto">abierto</span>' : '<span class="est cerrado">cerrado</span>'}</td>
 <td class="acc"><a class="btn sec" href="${wa}" target="_blank" rel="noopener">WhatsApp</a>
 <button class="btn sec" type="button" onclick="copiar('${esc(url)}',this)">Copiar</button>
 <a class="btn sec" href="/asistencia/${esc(e.id)}/qr" target="_blank">QR</a>
 <form method="post" action="/eventos/alternar${q}" style="display:inline"><input type="hidden" name="id" value="${esc(e.id)}">
-<button class="btn sec" type="submit">${e.abierto ? "Cerrar" : "Reabrir"}</button></form></td></tr>`;
+<button class="btn sec" type="submit">${e.abierto ? "Cerrar" : "Reabrir"}</button></form>
+<a class="btn sec peligro" href="/eventos/borrar${q}&id=${esc(e.id)}" title="Borrar evento (pide confirmación)">Borrar</a></td></tr>`;
   }).join("");
   const datos = asis.map((a) => {
     const e = evs.find((x) => x.id === a.evento);
-    return { ts: a.ts, nombre: a.nombre, mat: a.matricula, ev: a.evento,
+    return { ts: a.ts, nombre: a.nombre, mat: a.matricula, ev: a.evento, staff: esStaff(a),
              titulo: e?.titulo ?? "(evento borrado)", tipo: e?.tipo ?? "", fecha: e?.fecha ?? "" };
   });
   const hoy = new Date().toLocaleDateString("sv-SE");
@@ -226,21 +264,25 @@ tr:last-child td { border-bottom:none; }
 .est.abierto { background:#E8F3D9; color:#3F6B10; } .est.cerrado { background:#EEECE3; color:#6A6F98; }
 .tabla-scroll { overflow-x:auto; }
 .rank td:first-child { font-weight:800; color:#2E4BC6; width:34px; }
-.filtros { display:grid; grid-template-columns:2fr 1fr 1.6fr; gap:10px; margin-bottom:10px; }
+.filtros { display:grid; grid-template-columns:2fr 1fr 1.6fr 1fr; gap:10px; margin-bottom:10px; }
 @media (max-width:640px){ .filtros { grid-template-columns:1fr; } }
 .vacio { color:#8A8FB5; font-size:13px; padding:12px; }
+.btn.peligro { color:#A03434; background:#FBECEC; border-color:#F0CFCF; } .btn.peligro:hover { background:#F5D9D9; }
+.staff { font-size:10px; font-weight:800; letter-spacing:.05em; background:#1C2260; color:#fff; border-radius:999px; padding:2px 7px; margin-left:6px; vertical-align:middle; }
 </style></head><body>
 <header>${navAdmin(clave, "eventos")}<h1>Eventos MIND</h1><p>Crea el evento, comparte el enlace, y la asistencia se registra sola</p></header>
 <main>
 ${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
 <div class="stats">
   <div class="stat"><small>Eventos</small><b>${evs.length}</b></div>
-  <div class="stat"><small>Asistencias</small><b>${asis.length}</b></div>
+  <div class="stat"><small>Asistencias</small><b>${publico.length}</b></div>
   <div class="stat"><small>Personas distintas</small><b>${personas}</b></div>
+  <div class="stat"><small>Registros de staff</small><b>${asis.length - publico.length}</b></div>
 </div>
 
 <h2>Crear evento</h2>
-<form class="tarjeta" method="post" action="/eventos/nuevo${q}">
+<form class="tarjeta" method="post" action="/eventos/nuevo${q}"
+  onsubmit="if (this.dataset.enviando) return false; this.dataset.enviando = '1'; setTimeout(() => this.querySelectorAll('button').forEach((b) => { b.disabled = true; b.style.opacity = .55; }), 0);">
   <div class="fila">
     <div><label for="titulo">Título (opcional)</label><input id="titulo" name="titulo" maxlength="80" placeholder="p. ej. NeuroCharla: TDAH en la uni"></div>
     <div><label for="fecha">Fecha</label><input id="fecha" name="fecha" type="date" value="${hoy}" required></div>
@@ -262,6 +304,7 @@ ${filasEv || '<tr><td colspan="6" class="vacio">Todavía no hay eventos — crea
     ${(Object.keys(TIPOS) as TipoId[]).map((t) => `<option value="${t}">${TIPOS[t].emoji} ${TIPOS[t].nombre}</option>`).join("")}</select>
   <select id="fev"><option value="">Todos los eventos</option>
     ${evOrden.map((e) => `<option value="${esc(e.id)}">${esc(fechaBonita(e.fecha))} · ${esc(e.titulo)}</option>`).join("")}</select>
+  <select id="fstaff"><option value="no">Solo asistentes</option><option value="si">Solo staff</option><option value="">Asistentes y staff</option></select>
 </div>
 <div class="tabla-scroll"><table class="rank" id="ranking"><tr><th>#</th><th>Persona</th><th>Matrícula</th><th class="num">Eventos</th><th>Tipos</th></tr></table></div>
 <p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">Ranking según los filtros de arriba · <a id="csv" href="/eventos.csv${q}" style="color:#2E4BC6;font-weight:600">descargar CSV</a></p>
@@ -279,27 +322,29 @@ function pinta() {
   const q = document.getElementById('fq').value.trim().toLowerCase();
   const t = document.getElementById('ftipo').value;
   const ev = document.getElementById('fev').value;
+  const st = document.getElementById('fstaff').value;
   const rows = DATOS.filter((d) => (!q || d.nombre.toLowerCase().includes(q) || d.mat.toLowerCase().includes(q))
-    && (!t || d.tipo === t) && (!ev || d.ev === ev));
+    && (!t || d.tipo === t) && (!ev || d.ev === ev) && (st === '' || (st === 'si') === d.staff));
   const por = new Map();
   for (const d of rows) {
-    const p = por.get(d.mat) ?? { nombre: d.nombre, mat: d.mat, evs: new Set(), tipos: new Set() };
-    p.evs.add(d.ev); if (d.tipo) p.tipos.add(d.tipo); p.nombre = d.nombre; por.set(d.mat, p);
+    const p = por.get(d.mat) ?? { nombre: d.nombre, mat: d.mat, evs: new Set(), tipos: new Set(), staff: false };
+    p.evs.add(d.ev); if (d.tipo) p.tipos.add(d.tipo); p.nombre = d.nombre; p.staff = p.staff || d.staff; por.set(d.mat, p);
   }
+  const sello = (s) => s ? '<span class="staff">STAFF</span>' : '';
   const rank = [...por.values()].sort((a, b) => b.evs.size - a.evs.size || a.nombre.localeCompare(b.nombre));
   const rk = document.getElementById('ranking');
   rk.querySelectorAll('tr:not(:first-child)').forEach((r) => r.remove());
   if (!rank.length) rk.insertAdjacentHTML('beforeend', '<tr><td colspan="5" class="vacio">Sin asistencias con estos filtros.</td></tr>');
   rank.slice(0, 15).forEach((p, i) => rk.insertAdjacentHTML('beforeend',
-    '<tr><td>' + (i + 1) + '</td><td>' + esc(p.nombre) + '</td><td>' + esc(p.mat) + '</td><td class="num">' + p.evs.size + '</td><td>' +
+    '<tr><td>' + (i + 1) + '</td><td>' + esc(p.nombre) + sello(p.staff) + '</td><td>' + esc(p.mat) + '</td><td class="num">' + p.evs.size + '</td><td>' +
     [...p.tipos].map((x) => TIPOS[x] ? '<span class="tipo" style="background:' + TIPOS[x].color + ';color:' + TIPOS[x].tinta + '">' + TIPOS[x].emoji + ' ' + TIPOS[x].nombre + '</span> ' : '').join('') + '</td></tr>'));
   const li = document.getElementById('lista');
   li.querySelectorAll('tr:not(:first-child)').forEach((r) => r.remove());
   rows.sort((a, b) => (a.ts < b.ts ? 1 : -1)).forEach((d) => li.insertAdjacentHTML('beforeend',
-    '<tr><td>' + esc(new Date(d.ts).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })) + '</td><td>' + esc(d.nombre) + '</td><td>' + esc(d.mat) + '</td><td>' + esc(d.titulo) + '</td><td>' +
+    '<tr><td>' + esc(new Date(d.ts).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })) + '</td><td>' + esc(d.nombre) + sello(d.staff) + '</td><td>' + esc(d.mat) + '</td><td>' + esc(d.titulo) + '</td><td>' +
     (TIPOS[d.tipo] ? '<span class="tipo" style="background:' + TIPOS[d.tipo].color + ';color:' + TIPOS[d.tipo].tinta + '">' + TIPOS[d.tipo].emoji + ' ' + TIPOS[d.tipo].nombre + '</span>' : '') + '</td></tr>'));
 }
-for (const id of ['fq', 'ftipo', 'fev']) document.getElementById(id).addEventListener('input', pinta);
+for (const id of ['fq', 'ftipo', 'fev', 'fstaff']) document.getElementById(id).addEventListener('input', pinta);
 pinta();
 </script></body></html>`;
 }
@@ -307,12 +352,36 @@ pinta();
 export function renderCSV(evs: Evento[], asis: Asistencia[]): string {
   const enc = (s: string) => (/[,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
   const idx = new Map(evs.map((e) => [e.id, e]));
-  return ["fecha_registro,nombre,matricula,evento,tipo,fecha_evento,evento_id",
+  return ["fecha_registro,nombre,matricula,evento,tipo,fecha_evento,evento_id,staff",
     ...asis.map((a) => {
       const e = idx.get(a.evento);
       return [a.ts, enc(a.nombre), a.matricula, enc(e?.titulo ?? ""),
-              e ? TIPOS[e.tipo].nombre : "", e?.fecha ?? "", a.evento].join(",");
+              e ? TIPOS[e.tipo].nombre : "", e?.fecha ?? "", a.evento, esStaff(a) ? "si" : "no"].join(",");
     })].join("\n");
+}
+
+// pantalla "¿estás seguro?" antes de borrar un evento y sus asistencias
+export function renderConfirmarBorrado(ev: Evento, nAsis: number, nStaff: number, clave: string): string {
+  const q = `?clave=${encodeURIComponent(clave)}`;
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>¿Borrar evento? · MIND</title>${FUENTE}
+<style>${CSS_BASE}${NAV_CSS} header{background:linear-gradient(140deg,#A03434,#5B2A6E 60%,#232D93)} main{max-width:540px}
+.grande{font-size:22px;font-weight:800;margin-bottom:6px} .btn.peligro{background:#A03434} .btn.peligro:hover{background:#7E2626}
+.acciones{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px} ul{margin:12px 0 0 18px;font-size:13.5px;line-height:1.7}
+code{font-family:ui-monospace,monospace;font-size:12px;background:#F3F1E6;padding:1px 5px;border-radius:5px}</style></head><body>
+<header>${navAdmin(clave, "eventos")}<h1>¿Estás seguro?</h1><p>Borrar un evento no se puede deshacer</p></header>
+<main><div class="tarjeta"><div class="grande">Borrar «${esc(ev.titulo)}»</div>
+<p>${badge(ev.tipo)} &nbsp;${esc(fechaBonita(ev.fecha))} · registro ${ev.abierto ? "abierto" : "cerrado"}</p>
+<ul>
+  <li>Se borra el evento y su enlace <code>/asistencia/${esc(ev.id)}</code> deja de funcionar (y su QR también).</li>
+  <li>Se borran sus <b>${nAsis}</b> registro(s) de asistencia${nStaff ? ` (incluye ${nStaff} de staff)` : ""}. No se recuperan.</li>
+  <li>Si solo quieres que nadie más se registre, mejor usa <b>Cerrar</b> en la lista de eventos.</li>
+</ul>
+<form method="post" action="/eventos/borrar${q}" class="acciones">
+  <input type="hidden" name="id" value="${esc(ev.id)}"><input type="hidden" name="confirmar" value="si">
+  <a class="btn sec" href="/eventos${q}">Cancelar</a>
+  <button class="btn peligro" type="submit">Sí, borrar este evento</button>
+</form></div>${PUNTOS}</main></body></html>`;
 }
 
 export function renderQR(ev: Evento, svg: string, url: string): string {
