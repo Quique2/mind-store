@@ -25,17 +25,23 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   las claves secretas NUNCA van en el repo, solo en Railway).
 - `PUBLIC_URL` — URL pública del deploy (para success/cancel de Stripe).
 
-## Cuentas del grupo
-- Registro desde la página: formulario en `/cuentas` (botones rápidos por producto)
-  que escribe en el disco persistente de Railway (`/data/movimientos.csv`, volumen
-  `mind-store-volume`). Cada fila capturada así trae botón ✕ para corregir errores.
-- `cuentas/movimientos.csv` — libro histórico versionado en git (carga inicial y
-  cierres de evento). La página fusiona git + disco + Stripe.
-- `/cuentas?clave=...` — estado de cuenta (saldos, totales por evento, movimientos);
-  `/cuentas.csv?clave=...` — el mismo dato como CSV. Clave en `CUENTAS_CLAVE`.
-- Stripe NO se copia al CSV: la página lo consulta en vivo (caché 10 min) y solo
-  cuenta cargos desde `DESDE_TIENDA` (2026-08-24, lanzamiento) — la cuenta tiene
-  cargos previos que no son ventas de MIND.
+## Cuentas del grupo (ingresos y gastos)
+- Modelo `Mov` en `api/src/cuentas.ts`: `tipo` ingreso|gasto (monto siempre positivo,
+  `signo()` da el signo), `evento`, `concepto`, `ref` ("disco:<línea>" o "stripe:<cargo>";
+  sin ref = fila de git, no editable desde la página). Evento `inicial` = capital: suma
+  al saldo pero NO es venta (no entra a "ventas por producto").
+- `cuentas/movimientos.csv` (git): historial auditable; columnas
+  `fecha,evento,metodo,concepto,monto_mxn,detalle,tipo`, CSV con comillas (los conceptos
+  pueden llevar comas). El efectivo de REDSPOT va desglosado por producto (día 1 de las
+  notas del grupo = 770 exactos). `/data/movimientos.csv` = capturado en la página.
+- Stripe EN VIVO (caché 10 min de los cargos, no de los conceptos): cada cobro es un
+  ingreso y su comisión un GASTO "Comisión Stripe". Evento/concepto por cargo en
+  `cuentas/stripe_conceptos.json` (git, semilla) + `/data/stripe_conceptos.json` (disco,
+  editado desde la página con «Editar»). Solo cuenta desde `DESDE_TIENDA` (2026-08-24).
+- Página `/cuentas?clave=...`: botón Ingreso/Gasto, chips de productos (del catálogo) o de
+  gastos, desplegable de evento (eventos registrados en /eventos + usados + "ventas" +
+  capital + Otro…), «Editar» en cobros Stripe y filas del disco, ✕ solo en filas del disco.
+  Rutas: `/cuentas/nuevo`, `/cuentas/editar` (ref), `/cuentas/borrar` (idx), `/cuentas.csv`.
 - Routine semanal "Cuentas MIND" (lunes 9:00 MX) revisa la página y reporta.
 
 ## Asistencia a eventos
@@ -88,4 +94,5 @@ npm run dev:app          # Expo web (define EXPO_PUBLIC_API_URL=http://localhost
 - Spinner de Engranajes: $100 MXN
 - Cubito Fidget: $70 MXN
 - Pelota antiestrés: $20 MXN
-- Squishy / Pop-it / Stickers: $10 MXN c/u
+- Squishy / Pop-it / Stickers / Clicker 3D: $10 MXN c/u
+- Fidget Switch 3D: $20 MXN (los del grupo agregaron también Squishy Animalito $50 y Bolita Spinner 3D $125 desde /admin)

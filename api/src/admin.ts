@@ -1,7 +1,7 @@
 // Panel ejecutivo de MIND: estado de cuenta + eventos + asistencia en gráficas,
 // y edición del catálogo (precios, altas, bajas, ocultar). Los números se
 // calculan aquí en el servidor; Chart.js solo los pinta en el navegador.
-import type { Mov } from "./cuentas";
+import { signo, EVENTO_INICIAL, type Mov } from "./cuentas";
 import { TIPOS, fechaBonita, esStaff, type Evento, type Asistencia, type TipoId } from "./eventos";
 import type { Product } from "./products";
 import { NAV_CSS, navAdmin, LINKTREE, INSTAGRAM, WHATSAPP_GRUPO } from "./ui";
@@ -30,20 +30,30 @@ const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCa
 // "Fidget Spinner"...): se mapean al catálogo por nombre o por alias.
 const ALIAS: Record<string, string[]> = {
   "fidget-omega": ["hexafidget", "omega", "fidget hex"],
-  "spinner-engranes": ["spinner"],
+  "spinner-engranes": ["fidget spinner", "spinner de engranes", "spinner"],
   cubito: ["cubito", "cubo"],
-  "pelota-antiestres": ["pelota"],
+  "pelota-antiestres": ["pelota", "pelotita", "bolita antiestres"],
   squishy: ["squishy", "squishie"],
   popit: ["pop-it", "popit", "pop it"],
   stickers: ["sticker", "calcoman"],
+  "bolita-spinner-3d": ["bolita spinner"],
+  "clicker-3d": ["clicker"],
+  "fidget-switch-3d": ["switch"],
 };
-function productoDe(concepto: string, productos: Product[]): string | null {
+/** Productos que aparecen en un concepto ("Cubito y Squishy Animalito…" → los dos).
+ *  Si la clave de uno está contenida en la de otro más largo ("squishy" ⊂ "squishy
+ *  animalito…"), gana el más específico. */
+function productosDe(concepto: string, productos: Product[]): { nombre: string; precio: number }[] {
   const c = norm(concepto);
+  const hits: { nombre: string; precio: number; clave: string }[] = [];
   for (const p of productos) {
-    const claves = [norm(p.nombre), ...(ALIAS[p.id] ?? [])];
-    if (claves.some((k) => k && c.includes(k))) return p.nombre;
+    const claves = [norm(p.nombre), ...(ALIAS[p.id] ?? [])].filter((k) => k && c.includes(k));
+    if (claves.length) {
+      hits.push({ nombre: p.nombre, precio: p.precioCentavos / 100,
+                  clave: claves.sort((a, b) => b.length - a.length)[0] });
+    }
   }
-  return null;
+  return hits.filter((h) => !hits.some((o) => o !== h && o.clave.length > h.clave.length && o.clave.includes(h.clave)));
 }
 
 // fechas ISO (YYYY-MM-DD) manipuladas en UTC a mediodía para no cruzar de día
@@ -54,23 +64,28 @@ const sumarDias = (f: string, n: number) => {
 const lunes = (f: string) => sumarDias(f, -((aDate(f).getUTCDay() + 6) % 7));
 
 export function calcular(d: DatosPanel) {
-  const neto = (m: Mov) => m.monto - m.comision;
-  const ventas = d.movs.filter((m) => m.evento !== "inicial");
+  // ventas = ingresos que no son capital inicial; gastos aparte (incluye comisiones Stripe)
+  const ventas = d.movs.filter((m) => m.tipo === "ingreso" && m.evento !== EVENTO_INICIAL);
+  const gastos = d.movs.filter((m) => m.tipo === "gasto");
   const hoy = new Date().toISOString().slice(0, 10);
-  const suma = (f: (m: Mov) => boolean) => d.movs.filter(f).reduce((s, m) => s + neto(m), 0);
+  const suma = (f: (m: Mov) => boolean) => d.movs.filter(f).reduce((s, m) => s + signo(m), 0);
   const total = suma(() => true);
   const metodos = {
     efectivo: suma((m) => m.metodo === "efectivo"),
     transferencia: suma((m) => m.metodo === "revolut" || m.metodo === "spei"),
     stripe: suma((m) => m.metodo === "stripe"),
   };
-  const ingresos30 = ventas.filter((m) => m.fecha >= sumarDias(hoy, -30))
-                           .reduce((s, m) => s + neto(m), 0);
-  const bruto = ventas.reduce((s, m) => s + m.monto, 0);
+  const hace30 = sumarDias(hoy, -30);
+  const montoDe = (l: Mov[]) => l.reduce((s, m) => s + m.monto, 0);
+  const ingresos30 = montoDe(ventas.filter((m) => m.fecha >= hace30));
+  const gastos30 = montoDe(gastos.filter((m) => m.fecha >= hace30));
+  const bruto = montoDe(ventas);
+  const totalGastos = montoDe(gastos);
+  const comisiones = montoDe(gastos.filter((m) => m.concepto === "Comisión Stripe"));
 
-  // ingresos por semana (últimas 30 como máximo), apilados por método
-  const semanas: { label: string; efectivo: number; transferencia: number; stripe: number }[] = [];
-  const fechas = ventas.map((m) => m.fecha).sort();
+  // ingresos (bruto, por método) y gastos por semana; últimas 30 semanas como máximo
+  const semanas: { label: string; efectivo: number; transferencia: number; stripe: number; gastos: number }[] = [];
+  const fechas = [...ventas, ...gastos].map((m) => m.fecha).sort();
   if (fechas.length) {
     const fin = lunes(hoy);
     let w = lunes(fechas[0]);
@@ -78,19 +93,23 @@ export function calcular(d: DatosPanel) {
     const idx = new Map<string, number>();
     for (; w <= fin; w = sumarDias(w, 7)) {
       idx.set(w, semanas.length);
-      semanas.push({ label: fechaBonita(w).replace(/ \d{4}$/, ""), efectivo: 0, transferencia: 0, stripe: 0 });
+      semanas.push({ label: fechaBonita(w).replace(/ \d{4}$/, ""), efectivo: 0, transferencia: 0, stripe: 0, gastos: 0 });
     }
     for (const m of ventas) {
       const i = idx.get(lunes(m.fecha));
       if (i === undefined) continue;
       const k = m.metodo === "efectivo" ? "efectivo" : m.metodo === "stripe" ? "stripe" : "transferencia";
-      semanas[i][k] += neto(m);
+      semanas[i][k] += m.monto;
+    }
+    for (const m of gastos) {
+      const i = idx.get(lunes(m.fecha));
+      if (i !== undefined) semanas[i].gastos -= m.monto;   // negativo: se pinta hacia abajo
     }
   }
 
-  // saldo acumulado por fecha (incluye el saldo inicial)
+  // saldo acumulado por fecha (incluye el saldo inicial y resta gastos)
   const porFecha = new Map<string, number>();
-  for (const m of d.movs) porFecha.set(m.fecha, (porFecha.get(m.fecha) ?? 0) + neto(m));
+  for (const m of d.movs) porFecha.set(m.fecha, (porFecha.get(m.fecha) ?? 0) + signo(m));
   let acum = 0;
   const saldo = [...porFecha.entries()].sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([f, v]) => { acum += v; return { label: fechaBonita(f), y: Math.round(acum * 100) / 100 }; });
@@ -101,7 +120,22 @@ export function calcular(d: DatosPanel) {
     return [...mapa.entries()].sort((a, b) => b[1] - a[1]).map(([label, y]) => ({ label, y }));
   };
   const porEvento = agrupar((m) => m.evento);
-  const porProducto = agrupar((m) => productoDe(m.concepto, d.productos) ?? "Sin desglose");
+  // ventas por producto: un concepto con varios productos se reparte según sus precios
+  const prodMap = new Map<string, number>();
+  for (const m of ventas) {
+    const ps = productosDe(m.concepto, d.productos);
+    if (!ps.length) { prodMap.set("Sin desglose", (prodMap.get("Sin desglose") ?? 0) + m.monto); continue; }
+    const precios = ps.reduce((s, p) => s + p.precio, 0);
+    for (const p of ps) {
+      const parte = precios > 0 ? m.monto * p.precio / precios : m.monto / ps.length;
+      prodMap.set(p.nombre, (prodMap.get(p.nombre) ?? 0) + parte);
+    }
+  }
+  const porProducto = [...prodMap.entries()].sort((a, b) => b[1] - a[1])
+    .map(([label, y]) => ({ label, y: Math.round(y * 100) / 100 }));
+  const gastoMap = new Map<string, number>();
+  for (const m of gastos) gastoMap.set(m.concepto, (gastoMap.get(m.concepto) ?? 0) + m.monto);
+  const porGasto = [...gastoMap.entries()].sort((a, b) => b[1] - a[1]).map(([label, y]) => ({ label, y }));
 
   // asistencia: por evento (cronológico) con nuevos vs recurrentes, por tipo, ranking.
   // El staff se cuenta aparte: no infla la asistencia ni el ranking.
@@ -135,13 +169,14 @@ export function calcular(d: DatosPanel) {
   const top = [...personas.values()]
     .sort((a, b) => b.evs.size - a.evs.size || a.nombre.localeCompare(b.nombre)).slice(0, 10);
 
-  return { total, metodos, ingresos30, nVentas: ventas.length,
+  return { total, metodos, ingresos30, gastos30, gastos: totalGastos, comisiones, nVentas: ventas.length,
            ticket: ventas.length ? bruto / ventas.length : 0,
-           semanas, saldo, porEvento, porProducto, asistenciaEventos, porTipo, top,
+           semanas, saldo, porEvento, porProducto, porGasto, asistenciaEventos, porTipo, top,
+           ultimosGastos: [...gastos].sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).slice(0, 8),
            nAsis: asis.length, nStaff: staff.length,
            nStaffPersonas: new Set(staff.map((a) => a.matricula)).size,
            nPersonas: personas.size, abiertos: d.eventos.filter((e) => e.abierto).length,
-           ultimos: [...ventas].sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).slice(0, 8),
+           ultimos: [...ventas, ...gastos].sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).slice(0, 8),
            evRecientes: [...evOrden].reverse().slice(0, 6) };
 }
 
@@ -180,6 +215,7 @@ tr:last-child td { border-bottom:none; }
 .met { font-size:10.5px; font-weight:600; border-radius:999px; padding:2px 8px; white-space:nowrap; }
 .met-efectivo { background:#E8F3D9; color:#4C7A15; } .met-revolut, .met-spei { background:#DDF1F8; color:#156F8F; } .met-stripe { background:#E4E4F9; color:#4740B3; }
 .det { font-size:11px; color:#8A8FB5; }
+.rojo { color:#A03434; }
 .ok-aviso { background:#E8F3D9; border:1px solid #BEDD97; border-radius:10px; padding:10px 14px; font-size:13px; margin:0 0 14px; color:#3F6B10; font-weight:600; }
 .aviso { background:#FDF3D7; border:1px solid #EAD9A0; border-radius:10px; padding:10px 14px; font-size:12.5px; margin:0 0 14px; }
 .nota { font-size:12.5px; color:#6A6F98; margin:-4px 0 12px; }
@@ -248,7 +284,7 @@ export function renderPanel(d: DatosPanel): string {
   const badge = (t: TipoId) =>
     `<span class="tipo" style="background:${TIPOS[t].color};color:${TIPOS[t].tinta}">${TIPOS[t].emoji} ${TIPOS[t].nombre}</span>`;
   const datosJS = {
-    semanas: r.semanas, saldo: r.saldo, porEvento: r.porEvento, porProducto: r.porProducto,
+    semanas: r.semanas, saldo: r.saldo, porEvento: r.porEvento, porProducto: r.porProducto, porGasto: r.porGasto,
     asistenciaEventos: r.asistenciaEventos, porTipo: r.porTipo,
   };
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
@@ -263,8 +299,9 @@ ${d.stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mi
 
 <div class="kpis">
   <div class="kpi total"><small>Total MIND</small><b>${fmt(r.total)}</b><span>neto, todas las cuentas</span></div>
-  <div class="kpi"><small>Últimos 30 días</small><b>${fmt(r.ingresos30)}</b><span>ingresos netos</span></div>
-  <div class="kpi"><small>Movimientos</small><b>${r.nVentas}</b><span>ticket promedio ${fmt(r.ticket)}</span></div>
+  <div class="kpi"><small>Últimos 30 días</small><b>${fmt(r.ingresos30)}</b><span>ventas · gastos <span class="rojo">−${fmt(r.gastos30)}</span></span></div>
+  <div class="kpi"><small>Gastos</small><b class="rojo">−${fmt(r.gastos)}</b><span>comisiones Stripe ${fmt(r.comisiones)}</span></div>
+  <div class="kpi"><small>Ventas</small><b>${r.nVentas}</b><span>ticket promedio ${fmt(r.ticket)}</span></div>
   <div class="kpi"><small>Eventos</small><b>${d.eventos.length}</b><span>${r.abiertos} con registro abierto</span></div>
   <div class="kpi"><small>Asistencias</small><b>${r.nAsis}</b><span>${d.eventos.length ? (r.nAsis / d.eventos.length).toFixed(1) : "0"} por evento · sin staff</span></div>
   <div class="kpi"><small>Personas distintas</small><b>${r.nPersonas}</b><span>matrículas únicas</span></div>
@@ -279,12 +316,19 @@ ${d.stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mi
 
 <h2>💰 Dinero <small>efectivo ${fmt(r.metodos.efectivo)} · transferencia ${fmt(r.metodos.transferencia)} · tarjeta ${fmt(r.metodos.stripe)}</small></h2>
 <div class="grid2">
-  <div class="graf"><h3>Ingresos por semana <small>neto, por método</small></h3><div class="lienzo"><canvas id="c-semanas"></canvas></div></div>
+  <div class="graf"><h3>Ingresos y gastos por semana <small>ventas por método · gastos hacia abajo</small></h3><div class="lienzo"><canvas id="c-semanas"></canvas></div></div>
   <div class="graf"><h3>Saldo acumulado <small>desde el corte inicial</small></h3><div class="lienzo"><canvas id="c-saldo"></canvas></div></div>
 </div>
 <div class="grid2">
   <div class="graf"><h3>Recaudado por evento <small>bruto</small></h3><div class="lienzo"><canvas id="c-eventos"></canvas></div></div>
   <div class="graf"><h3>Ventas por producto <small>según el concepto capturado</small></h3><div class="lienzo"><canvas id="c-productos"></canvas></div></div>
+</div>
+<div class="grid2">
+  <div class="graf"><h3>Gastos por concepto <small>incluye comisiones de Stripe</small></h3><div class="lienzo"><canvas id="c-gastos"></canvas></div></div>
+  <div class="graf"><h3>Últimos gastos</h3>
+    ${r.ultimosGastos.length ? `<table><tr><th>Fecha</th><th>Método</th><th>Concepto</th><th class="num">Monto</th></tr>${
+      r.ultimosGastos.map((m) => `<tr><td>${esc(fechaBonita(m.fecha))}</td><td><span class="met met-${clase(m)}">${esc(m.metodo)}</span></td><td>${esc(m.concepto)}<div class="det">${esc(m.evento)}${m.detalle ? " · " + esc(m.detalle) : ""}</div></td><td class="num rojo">−${fmt(m.monto)}</td></tr>`).join("")
+    }</table>` : '<p class="vacio">Sin gastos registrados. Se capturan en Cuentas con el botón «Gasto».</p>'}</div>
 </div>
 
 <h2>🎟️ Eventos y asistencia</h2>
@@ -302,7 +346,7 @@ ${d.stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mi
 <div class="grid2">
   <div class="graf"><h3>Últimos movimientos</h3>
     ${r.ultimos.length ? `<table><tr><th>Fecha</th><th>Método</th><th>Concepto</th><th class="num">Monto</th></tr>${
-      r.ultimos.map((m) => `<tr><td>${esc(fechaBonita(m.fecha))}</td><td><span class="met met-${clase(m)}">${esc(m.metodo)}</span></td><td>${esc(m.concepto)}<div class="det">${esc(m.detalle)}</div></td><td class="num">${fmt(m.monto)}</td></tr>`).join("")
+      r.ultimos.map((m) => `<tr><td>${esc(fechaBonita(m.fecha))}</td><td><span class="met met-${clase(m)}">${esc(m.metodo)}</span></td><td>${esc(m.concepto)}<div class="det">${esc(m.evento)}${m.detalle ? " · " + esc(m.detalle) : ""}</div></td><td class="num${m.tipo === "gasto" ? " rojo" : ""}">${m.tipo === "gasto" ? "−" : ""}${fmt(m.monto)}</td></tr>`).join("")
     }</table>` : '<p class="vacio">Sin movimientos.</p>'}
     <p class="det" style="margin-top:8px"><a href="/cuentas${q}" style="color:#2E4BC6;font-weight:600">Ver estado de cuenta completo y capturar →</a></p></div>
   <div class="graf"><h3>Eventos recientes</h3>
@@ -346,7 +390,8 @@ if (typeof Chart === 'undefined') {
     data: { labels: D.semanas.map((s) => s.label), datasets: [
       { label: 'Efectivo', data: D.semanas.map((s) => s.efectivo), backgroundColor: '#8BC53F' },
       { label: 'Transferencia / Revolut', data: D.semanas.map((s) => s.transferencia), backgroundColor: '#29A3C7' },
-      { label: 'Tarjeta (neto)', data: D.semanas.map((s) => s.stripe), backgroundColor: '#C026D3' } ] },
+      { label: 'Tarjeta (bruto)', data: D.semanas.map((s) => s.stripe), backgroundColor: '#C026D3' },
+      { label: 'Gastos', data: D.semanas.map((s) => s.gastos), backgroundColor: '#EF6C4C' } ] },
     options: { ...base, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, ticks: { callback: mxn } } },
       plugins: { ...leyenda('bottom'), tooltip: { callbacks: { label: (t) => t.dataset.label + ': ' + mxn(t.raw) } } } } });
   if ((c = sinDatos('c-saldo', !D.saldo.length))) new Chart(c, { type: 'line',
@@ -360,6 +405,9 @@ if (typeof Chart === 'undefined') {
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: (t) => mxn(t.raw) } } } } });
   if ((c = sinDatos('c-productos', !D.porProducto.length))) new Chart(c, { type: 'doughnut',
     data: { labels: D.porProducto.map((p) => p.label), datasets: [{ data: D.porProducto.map((p) => p.y), backgroundColor: PALETA, borderWidth: 2, borderColor: '#fff' }] },
+    options: { ...base, cutout: '58%', plugins: { ...leyenda('bottom'), tooltip: { callbacks: { label: (t) => t.label + ': ' + mxn(t.raw) } } } } });
+  if ((c = sinDatos('c-gastos', !D.porGasto.length))) new Chart(c, { type: 'doughnut',
+    data: { labels: D.porGasto.map((g) => g.label), datasets: [{ data: D.porGasto.map((g) => g.y), backgroundColor: ['#EF6C4C', '#F59E0B', '#C026D3', '#6A6F98', '#EC4899', '#2E4BC6', '#22B8CF', '#8BC53F'], borderWidth: 2, borderColor: '#fff' }] },
     options: { ...base, cutout: '58%', plugins: { ...leyenda('bottom'), tooltip: { callbacks: { label: (t) => t.label + ': ' + mxn(t.raw) } } } } });
   if ((c = sinDatos('c-asis', !D.asistenciaEventos.length))) new Chart(c, { type: 'bar',
     data: { labels: D.asistenciaEventos.map((e) => [e.corto, e.emoji + ' ' + e.titulo.slice(0, 22)]),

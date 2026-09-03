@@ -9,8 +9,8 @@ import { z } from "zod";
 import { catalogo, catalogoPublico, byId, guardarProducto, borrarProducto, restaurarCatalogo,
          hayCatalogoEditado } from "./products";
 import { renderPanel } from "./admin";
-import { leerCSV, movsStripe, renderCuentas, renderCSV, agregarMov, borrarMov,
-         hayDiscoPersistente } from "./cuentas";
+import { leerCSV, movsStripe, renderCuentas, renderCSV, agregarMov, borrarMov, editarMov,
+         guardarMetaStripe, hayDiscoPersistente } from "./cuentas";
 import QRCode from "qrcode";
 import { leerEventos, leerAsistencias, crearEvento, alternarEvento, buscarEvento, registrar,
          normMatricula, esTipo, renderAdmin, renderFormulario, renderResultado, renderQR,
@@ -109,9 +109,16 @@ async function cuentasHandler(req: express.Request, res: express.Response,
   if (csv) {
     res.type("text/csv").send(renderCSV(movs));
   } else {
-    res.type("html").send(renderCuentas(movs, st.ok, String(req.query.clave), aviso, catalogo()));
+    res.type("html").send(renderCuentas(movs, st.ok, String(req.query.clave), aviso, catalogo(),
+                                        nombresEventos()));
   }
 }
+// títulos de los eventos registrados (más reciente primero) para el desplegable de Cuentas
+const nombresEventos = () =>
+  [...leerEventos()].sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).map((e) => e.titulo);
+// "Otro…" en el desplegable manda __otro + el nombre escrito
+const eventoElegido = (evento: string, otro: string) =>
+  (evento === "__otro" ? otro.trim() : evento.trim()) || "ventas";
 app.get("/cuentas", (req, res) => {
   const ok = req.query.ok ? String(req.query.ok).slice(0, 120) : undefined;
   void cuentasHandler(req, res, false, ok);
@@ -124,7 +131,9 @@ const MovSchema = z.object({
   concepto: z.string().min(1).max(80),
   monto: z.coerce.number().positive().max(100000),
   detalle: z.string().max(80).optional().default(""),
-  evento: z.string().max(40).optional().default("ventas"),
+  evento: z.string().max(60).optional().default("ventas"),
+  eventoOtro: z.string().max(60).optional().default(""),
+  tipo: z.enum(["ingreso", "gasto"]).optional().default("ingreso"),
 });
 
 app.post("/cuentas/nuevo", express.urlencoded({ extended: false }), (req, res) => {
@@ -135,10 +144,35 @@ app.post("/cuentas/nuevo", express.urlencoded({ extended: false }), (req, res) =
     return res.status(503).send("No hay disco persistente configurado; el movimiento no se guardó.");
   }
   const m = parsed.data;
-  agregarMov({ fecha: m.fecha, evento: m.evento, metodo: m.metodo,
-               concepto: m.concepto, monto: m.monto, detalle: m.detalle });
-  const ok = `✓ Registrado: ${m.concepto} · $${m.monto.toFixed(2)} (${m.metodo})`;
+  agregarMov({ fecha: m.fecha, evento: eventoElegido(m.evento, m.eventoOtro), metodo: m.metodo,
+               concepto: m.concepto, monto: m.monto, detalle: m.detalle, tipo: m.tipo });
+  const ok = `✓ ${m.tipo === "gasto" ? "Gasto registrado" : "Registrado"}: ${m.concepto} · ${m.tipo === "gasto" ? "−" : ""}$${m.monto.toFixed(2)} (${m.metodo})`;
   res.redirect(`/cuentas?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(ok)}`);
+});
+
+// cambiar evento / concepto de un cobro con tarjeta (Stripe) o de un movimiento capturado aquí
+const EditSchema = z.object({
+  ref: z.string().min(7).max(80),
+  evento: z.string().max(60),
+  eventoOtro: z.string().max(60).optional().default(""),
+  concepto: z.string().trim().min(1).max(80),
+});
+app.post("/cuentas/editar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const parsed = EditSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).send("Datos inválidos. Regresa y revisa el formulario.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; el cambio no se guardó.");
+  const e = parsed.data;
+  const evento = eventoElegido(e.evento, e.eventoOtro);
+  let msg = "No se encontró ese movimiento.";
+  if (e.ref.startsWith("stripe:") && /^(ch|py)_[A-Za-z0-9]+$/.test(e.ref.slice(7))) {
+    guardarMetaStripe(e.ref.slice(7), { evento, concepto: e.concepto });
+    msg = `✓ Cobro con tarjeta actualizado: ${e.concepto} · ${evento}`;
+  } else if (e.ref.startsWith("disco:")) {
+    const r = editarMov(Number(e.ref.slice(6)), { evento, concepto: e.concepto });
+    if (r) msg = `✓ Actualizado: ${r.concepto} · ${r.evento}`;
+  }
+  res.redirect(`/cuentas?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(msg)}`);
 });
 
 app.post("/cuentas/borrar", express.urlencoded({ extended: false }), (req, res) => {

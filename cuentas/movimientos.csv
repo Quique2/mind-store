@@ -1,7 +1,11 @@
-fecha,evento,metodo,concepto,monto_mxn,detalle
-2026-08-20,inicial,efectivo,Saldo inicial de caja,664.00,corte pre-REDSPOT
-2026-08-27,REDSPOT,efectivo,Ventas en efectivo,770.00,corte de caja post-evento (664 -> 1434)
-2026-08-26,REDSPOT,revolut,Hexafidget,50.00,Linda Veronica Almeida Landa
-2026-08-26,REDSPOT,revolut,Fidget Spinner,100.05,Leonardo Lopez Guerra
-2026-08-27,REDSPOT,revolut,Pelota antiestres,20.00,David Alain Roccio Ontiveros De Luna
-2026-08-27,REDSPOT,revolut,Pelota antiestres,20.00,Diego Ulloa Chaparro
+fecha,evento,metodo,concepto,monto_mxn,detalle,tipo
+2026-08-20,inicial,efectivo,Saldo inicial de caja,664.00,corte pre-REDSPOT,ingreso
+2026-08-26,REDSPOT,efectivo,Pop-it,140.00,día 1 · 14 pop-its · desglose de notas (efectivo 770),ingreso
+2026-08-26,REDSPOT,efectivo,Pelota antiestrés,20.00,día 1 · desglose de notas,ingreso
+2026-08-26,REDSPOT,efectivo,Spinner de Engranajes,200.00,día 1 · 2 spinners · desglose de notas,ingreso
+2026-08-26,REDSPOT,efectivo,Squishy,260.00,día 1 · desglose de notas,ingreso
+2026-08-26,REDSPOT,efectivo,Fidget Omega MIND,150.00,día 1 · 3 hexafidgets · desglose de notas,ingreso
+2026-08-26,REDSPOT,revolut,Fidget Omega MIND,50.00,Linda Veronica Almeida Landa (hexafidget),ingreso
+2026-08-26,REDSPOT,revolut,Spinner de Engranajes,100.05,Leonardo Lopez Guerra (fidget spinner),ingreso
+2026-08-27,REDSPOT,revolut,Pelota antiestrés,20.00,David Alain Roccio Ontiveros De Luna,ingreso
+2026-08-27,REDSPOT,revolut,Pelota antiestrés,20.00,Diego Ulloa Chaparro,ingreso

@@ -59,6 +59,20 @@ export const PRODUCTOS_BASE: Product[] = [
     descripcion: "Calcomanías para decorar lo que quieras.",
     precioCentavos: 1000,
   },
+  {
+    id: "clicker-3d",
+    nombre: "Clicker 3D",
+    descripcion: "Clic-clic impreso en 3D para manos inquietas.",
+    precioCentavos: 1000,
+    emoji: "🔘",
+  },
+  {
+    id: "fidget-switch-3d",
+    nombre: "Fidget Switch 3D",
+    descripcion: "Interruptor fidget impreso en 3D: sube, baja, repite.",
+    precioCentavos: 2000,
+    emoji: "🎚️",
+  },
 ];
 
 const DIR = process.env.DATA_DIR ?? "/data";
