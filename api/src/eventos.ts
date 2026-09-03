@@ -380,7 +380,7 @@ ${evs.length ? `<form class="tarjeta" method="post" action="/asistencia/manual${
   <select id="fstaff"><option value="no">Solo asistentes</option><option value="si">Solo staff</option><option value="">Asistentes y staff</option></select>
 </div>
 <div class="tabla-scroll"><table class="rank" id="ranking"><thead><tr><th>#</th><th>Persona</th><th>Matrícula</th><th class="num">Eventos</th><th>Tipos</th><th></th></tr></thead><tbody></tbody></table></div>
-<p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">Ranking según los filtros de arriba · «Hacer staff» / «Quitar de staff» cambia a la persona en todos sus registros · <a id="csv" href="/eventos.csv${q}" style="color:#2E4BC6;font-weight:600">descargar CSV</a></p>
+<p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">Ranking completo según los filtros de arriba (<b id="nrank">0 personas</b>) · «Hacer staff» / «Quitar de staff» cambia a la persona en todos sus registros · <a id="csv" href="/eventos.csv${q}" style="color:#2E4BC6;font-weight:600">descargar CSV</a></p>
 <div class="tabla-scroll"><table id="lista"><thead><tr><th>Cuándo</th><th>Nombre</th><th>Matrícula</th><th>Evento</th><th>Tipo</th><th></th></tr></thead><tbody></tbody></table></div>
 <p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">«Quitar» borra ese registro; si a la persona no le queda ninguno, desaparece del historial.</p>
 ${PUNTOS}
@@ -429,7 +429,8 @@ function pinta() {
   // las filas van SIEMPRE dentro del <tbody>: insertarlas en <table> crea un tbody por fila y se duplican
   const tb = document.querySelector('#ranking tbody');
   tb.innerHTML = rank.length ? '' : '<tr><td colspan="6" class="vacio">Sin asistencias con estos filtros.</td></tr>';
-  rank.slice(0, 15).forEach((p, i) => tb.insertAdjacentHTML('beforeend',
+  document.getElementById('nrank').textContent = rank.length + (rank.length === 1 ? ' persona' : ' personas');
+  rank.forEach((p, i) => tb.insertAdjacentHTML('beforeend',
     '<tr><td>' + (i + 1) + '</td><td>' + esc(p.nombre) + sello(p.staff) + '</td><td>' + esc(p.mat) + '</td><td class="num">' + p.evs.size + '</td><td>' +
     [...p.tipos].map((x) => TIPOS[x] ? '<span class="tipo" style="background:' + TIPOS[x].color + ';color:' + TIPOS[x].tinta + '">' + TIPOS[x].emoji + ' ' + TIPOS[x].nombre + '</span> ' : '').join('') +
     '</td><td class="acciones">' + btnStaff(p) + '</td></tr>'));
