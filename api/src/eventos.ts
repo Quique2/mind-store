@@ -58,8 +58,9 @@ export function crearEvento(tipo: TipoId, titulo: string, fecha: string)
                                && Date.now() - Date.parse(e.creado) < 2 * 60 * 1000);
   if (igual) return { evento: igual, repetido: true };
   let id = "";
+  // solo letras y números: enlaces limpios (sin guiones al inicio) y fáciles de dictar
   do { id = crypto.randomBytes(4).toString("base64url").slice(0, 6).toLowerCase(); }
-  while (evs.some((e) => e.id === id));
+  while (/[^a-z0-9]/.test(id) || evs.some((e) => e.id === id));
   const ev: Evento = { id, tipo, fecha, abierto: true, creado: new Date().toISOString(), titulo: nombre };
   evs.push(ev);
   escribirJSON(F_EV, evs);
@@ -93,10 +94,11 @@ export function buscarEvento(id: string): Evento | undefined {
 }
 
 /** Registra asistencia. Devuelve 'ok' | 'duplicado' | 'cerrado' | 'no-existe'. */
-export function registrar(eventoId: string, nombre: string, matricula: string, staff = false) {
+export function registrar(eventoId: string, nombre: string, matricula: string, staff = false,
+                          forzar = false) {
   const ev = buscarEvento(eventoId);
   if (!ev) return "no-existe" as const;
-  if (!ev.abierto) return "cerrado" as const;
+  if (!ev.abierto && !forzar) return "cerrado" as const;   // forzar = captura desde el panel
   const mat = normMatricula(matricula);
   const lista = leerAsistencias();
   if (lista.some((a) => a.evento === eventoId && a.matricula === mat)) return "duplicado" as const;
@@ -104,6 +106,44 @@ export function registrar(eventoId: string, nombre: string, matricula: string, s
                ts: new Date().toISOString(), staff });
   escribirJSON(F_AS, lista);
   return "ok" as const;
+}
+
+/** Quita un registro concreto (evento + matrícula). */
+export function quitarAsistencia(eventoId: string, matricula: string): Asistencia | null {
+  const mat = normMatricula(matricula);
+  const lista = leerAsistencias();
+  const i = lista.findIndex((a) => a.evento === eventoId && a.matricula === mat);
+  if (i < 0) return null;
+  const [quitada] = lista.splice(i, 1);
+  escribirJSON(F_AS, lista);
+  return quitada;
+}
+
+/** Marca o desmarca como staff a una persona en TODOS sus registros. */
+export function cambiarStaff(matricula: string, staff: boolean): { nombre: string; n: number } | null {
+  const mat = normMatricula(matricula);
+  const lista = leerAsistencias();
+  const suyos = lista.filter((a) => a.matricula === mat);
+  if (!suyos.length) return null;
+  for (const a of suyos) a.staff = staff;
+  escribirJSON(F_AS, lista);
+  return { nombre: suyos[suyos.length - 1].nombre, n: suyos.length };
+}
+
+/** Personas conocidas (derivadas de los registros): nombre más reciente por matrícula
+ *  y si son staff (algún registro como staff). Sin registros, la persona desaparece. */
+export function listaPersonas(asis: Asistencia[]): { nombre: string; matricula: string; staff: boolean }[] {
+  const m = new Map<string, { nombre: string; matricula: string; staff: boolean; ts: string }>();
+  for (const a of asis) {
+    const p = m.get(a.matricula);
+    if (!p) m.set(a.matricula, { nombre: a.nombre, matricula: a.matricula, staff: esStaff(a), ts: a.ts });
+    else {
+      p.staff = p.staff || esStaff(a);
+      if (a.ts > p.ts) { p.nombre = a.nombre; p.ts = a.ts; }
+    }
+  }
+  return [...m.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"))
+    .map(({ nombre, matricula, staff }) => ({ nombre, matricula, staff }));
 }
 
 export const normMatricula = (m: string) =>
@@ -219,6 +259,10 @@ export function renderAdmin(evs: Evento[], asis: Asistencia[], clave: string,
   const publico = asis.filter((a) => !esStaff(a));
   const personas = new Set(publico.map((a) => a.matricula)).size;
   const q = `?clave=${encodeURIComponent(clave)}`;
+  const staffRoster = listaPersonas(asis).filter((p) => p.staff);
+  const primerAbierto = evOrden.find((e) => e.abierto)?.id;
+  const opcionesEv = evOrden.map((e) =>
+    `<option value="${esc(e.id)}"${e.id === primerAbierto ? " selected" : ""}>${esc(fechaBonita(e.fecha))} · ${esc(e.titulo)}${e.abierto ? "" : " (cerrado)"}</option>`).join("");
   const filasEv = evOrden.map((e) => {
     const url = `${base}/asistencia/${e.id}`;
     const wa = `https://wa.me/?text=${encodeURIComponent(`${TIPOS[e.tipo].emoji} ${e.titulo}\nRegistra tu asistencia aquí 👉 ${url}`)}`;
@@ -269,6 +313,15 @@ tr:last-child td { border-bottom:none; }
 .vacio { color:#8A8FB5; font-size:13px; padding:12px; }
 .btn.peligro { color:#A03434; background:#FBECEC; border-color:#F0CFCF; } .btn.peligro:hover { background:#F5D9D9; }
 .staff { font-size:10px; font-weight:800; letter-spacing:.05em; background:#1C2260; color:#fff; border-radius:999px; padding:2px 7px; margin-left:6px; vertical-align:middle; }
+.roster { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:6px; margin-top:6px; }
+.persona { text-transform:none; letter-spacing:0; font-size:13.5px; font-weight:600; color:#1C2260; display:flex; align-items:center; gap:10px; background:#FCFBF5; border:1.5px solid #DDD9C6; border-radius:10px; padding:8px 10px; cursor:pointer; margin:0; }
+.persona input { width:18px; height:18px; min-height:0; flex:none; }
+.persona small { display:block; font-size:11px; color:#8A8FB5; font-weight:500; }
+.persona.ya { opacity:.6; cursor:default; } .persona.ya small::after { content:" · ya registrado"; color:#3F6B10; font-weight:700; }
+.check label { text-transform:none; letter-spacing:0; font-size:13.5px; font-weight:600; color:#1C2260; display:flex; align-items:center; gap:8px; min-height:44px; margin:0; }
+.check input { width:18px; height:18px; min-height:0; }
+.mini { font-size:11.5px; padding:5px 10px; min-height:30px; }
+td.acciones { white-space:nowrap; } td.acciones form { display:inline; }
 </style></head><body>
 <header>${navAdmin(clave, "eventos")}<h1>Eventos MIND</h1><p>Crea el evento, comparte el enlace, y la asistencia se registra sola</p></header>
 <main>
@@ -297,6 +350,26 @@ ${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
 ${filasEv || '<tr><td colspan="6" class="vacio">Todavía no hay eventos — crea el primero arriba.</td></tr>'}
 </table></div>
 
+<h2>Registrar asistencia desde aquí</h2>
+${evs.length ? `<form class="tarjeta" method="post" action="/asistencia/manual${q}" id="manual">
+  <div class="fila">
+    <div><label for="mev">Agregar asistencia al evento de:</label><select id="mev" name="evento" required>${opcionesEv}</select></div>
+  </div>
+  <label style="margin-top:14px">Staff de MIND</label>
+  ${staffRoster.length
+    ? `<div class="roster">${staffRoster.map((p) =>
+        `<label class="persona"><input type="checkbox" name="matriculas" value="${esc(p.matricula)}"><span>${esc(p.nombre)}<small>${esc(p.matricula)}</small></span></label>`).join("")}</div>`
+    : '<p class="vacio">Todavía nadie está marcado como staff. Cuando alguien se registre como staff, o lo marques abajo con «Hacer staff», aparecerá aquí para palomearlo.</p>'}
+  <label style="margin-top:14px">Otra persona (opcional)</label>
+  <div class="fila">
+    <div><input name="nombre" maxlength="80" placeholder="Nombre completo" autocomplete="off"></div>
+    <div><input name="matricula" maxlength="12" placeholder="Matrícula" style="text-transform:uppercase" autocomplete="off"></div>
+    <div class="check"><label><input type="checkbox" name="otroStaff"> Es staff</label></div>
+  </div>
+  <div style="margin-top:14px"><button class="btn" type="submit">Registrar asistencia</button>
+    <span class="det" style="display:inline;margin-left:10px">Funciona aunque el evento esté cerrado · una matrícula cuenta una vez por evento</span></div>
+</form>` : '<p class="vacio">Crea un evento primero.</p>'}
+
 <h2>Asistencia</h2>
 <div class="filtros">
   <input id="fq" placeholder="Buscar por nombre o matrícula…">
@@ -306,15 +379,32 @@ ${filasEv || '<tr><td colspan="6" class="vacio">Todavía no hay eventos — crea
     ${evOrden.map((e) => `<option value="${esc(e.id)}">${esc(fechaBonita(e.fecha))} · ${esc(e.titulo)}</option>`).join("")}</select>
   <select id="fstaff"><option value="no">Solo asistentes</option><option value="si">Solo staff</option><option value="">Asistentes y staff</option></select>
 </div>
-<div class="tabla-scroll"><table class="rank" id="ranking"><tr><th>#</th><th>Persona</th><th>Matrícula</th><th class="num">Eventos</th><th>Tipos</th></tr></table></div>
-<p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">Ranking según los filtros de arriba · <a id="csv" href="/eventos.csv${q}" style="color:#2E4BC6;font-weight:600">descargar CSV</a></p>
-<div class="tabla-scroll"><table id="lista"><tr><th>Cuándo</th><th>Nombre</th><th>Matrícula</th><th>Evento</th><th>Tipo</th></tr></table></div>
+<div class="tabla-scroll"><table class="rank" id="ranking"><thead><tr><th>#</th><th>Persona</th><th>Matrícula</th><th class="num">Eventos</th><th>Tipos</th><th></th></tr></thead><tbody></tbody></table></div>
+<p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">Ranking según los filtros de arriba · «Hacer staff» / «Quitar de staff» cambia a la persona en todos sus registros · <a id="csv" href="/eventos.csv${q}" style="color:#2E4BC6;font-weight:600">descargar CSV</a></p>
+<div class="tabla-scroll"><table id="lista"><thead><tr><th>Cuándo</th><th>Nombre</th><th>Matrícula</th><th>Evento</th><th>Tipo</th><th></th></tr></thead><tbody></tbody></table></div>
+<p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">«Quitar» borra ese registro; si a la persona no le queda ninguno, desaparece del historial.</p>
 ${PUNTOS}
 </main>
 <script>
 const TIPOS = ${jsonSeguro(TIPOS)};
 const DATOS = ${jsonSeguro(datos)};
+const Q = ${jsonSeguro(q)};
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// confirmación antes de quitar un registro (el texto viene en data-confirmar)
+document.addEventListener('submit', (e) => {
+  const f = e.target;
+  if (f.dataset && f.dataset.confirmar && !confirm(f.dataset.confirmar)) e.preventDefault();
+});
+// en el formulario de captura: quien ya está en el evento elegido aparece palomeado y bloqueado
+function pintaRoster() {
+  const sel = document.getElementById('mev');
+  if (!sel) return;
+  const en = new Set(DATOS.filter((d) => d.ev === sel.value).map((d) => d.mat));
+  document.querySelectorAll('.persona').forEach((l) => {
+    const c = l.querySelector('input'); const ya = en.has(c.value);
+    c.disabled = ya; c.checked = ya; l.classList.toggle('ya', ya);
+  });
+}
 function copiar(url, btn) {
   navigator.clipboard.writeText(url).then(() => { btn.textContent = '✓ copiado'; setTimeout(() => btn.textContent = 'Copiar', 1500); });
 }
@@ -331,21 +421,29 @@ function pinta() {
     p.evs.add(d.ev); if (d.tipo) p.tipos.add(d.tipo); p.nombre = d.nombre; p.staff = p.staff || d.staff; por.set(d.mat, p);
   }
   const sello = (s) => s ? '<span class="staff">STAFF</span>' : '';
+  const btnStaff = (p) => '<form method="post" action="/asistencia/staff' + Q + '"><input type="hidden" name="matricula" value="' + esc(p.mat) + '">' +
+    '<input type="hidden" name="staff" value="' + (p.staff ? 'no' : 'si') + '"><button class="btn sec mini" type="submit">' + (p.staff ? 'Quitar de staff' : 'Hacer staff') + '</button></form>';
+  const btnQuitar = (d) => '<form method="post" action="/asistencia/quitar' + Q + '" data-confirmar="' + esc('¿Quitar la asistencia de ' + d.nombre + ' a «' + d.titulo + '»?') + '">' +
+    '<input type="hidden" name="evento" value="' + esc(d.ev) + '"><input type="hidden" name="matricula" value="' + esc(d.mat) + '"><button class="btn sec mini peligro" type="submit">Quitar</button></form>';
   const rank = [...por.values()].sort((a, b) => b.evs.size - a.evs.size || a.nombre.localeCompare(b.nombre));
-  const rk = document.getElementById('ranking');
-  rk.querySelectorAll('tr:not(:first-child)').forEach((r) => r.remove());
-  if (!rank.length) rk.insertAdjacentHTML('beforeend', '<tr><td colspan="5" class="vacio">Sin asistencias con estos filtros.</td></tr>');
-  rank.slice(0, 15).forEach((p, i) => rk.insertAdjacentHTML('beforeend',
+  // las filas van SIEMPRE dentro del <tbody>: insertarlas en <table> crea un tbody por fila y se duplican
+  const tb = document.querySelector('#ranking tbody');
+  tb.innerHTML = rank.length ? '' : '<tr><td colspan="6" class="vacio">Sin asistencias con estos filtros.</td></tr>';
+  rank.slice(0, 15).forEach((p, i) => tb.insertAdjacentHTML('beforeend',
     '<tr><td>' + (i + 1) + '</td><td>' + esc(p.nombre) + sello(p.staff) + '</td><td>' + esc(p.mat) + '</td><td class="num">' + p.evs.size + '</td><td>' +
-    [...p.tipos].map((x) => TIPOS[x] ? '<span class="tipo" style="background:' + TIPOS[x].color + ';color:' + TIPOS[x].tinta + '">' + TIPOS[x].emoji + ' ' + TIPOS[x].nombre + '</span> ' : '').join('') + '</td></tr>'));
-  const li = document.getElementById('lista');
-  li.querySelectorAll('tr:not(:first-child)').forEach((r) => r.remove());
-  rows.sort((a, b) => (a.ts < b.ts ? 1 : -1)).forEach((d) => li.insertAdjacentHTML('beforeend',
+    [...p.tipos].map((x) => TIPOS[x] ? '<span class="tipo" style="background:' + TIPOS[x].color + ';color:' + TIPOS[x].tinta + '">' + TIPOS[x].emoji + ' ' + TIPOS[x].nombre + '</span> ' : '').join('') +
+    '</td><td class="acciones">' + btnStaff(p) + '</td></tr>'));
+  const lb = document.querySelector('#lista tbody');
+  lb.innerHTML = '';
+  rows.sort((a, b) => (a.ts < b.ts ? 1 : -1)).forEach((d) => lb.insertAdjacentHTML('beforeend',
     '<tr><td>' + esc(new Date(d.ts).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short' })) + '</td><td>' + esc(d.nombre) + sello(d.staff) + '</td><td>' + esc(d.mat) + '</td><td>' + esc(d.titulo) + '</td><td>' +
-    (TIPOS[d.tipo] ? '<span class="tipo" style="background:' + TIPOS[d.tipo].color + ';color:' + TIPOS[d.tipo].tinta + '">' + TIPOS[d.tipo].emoji + ' ' + TIPOS[d.tipo].nombre + '</span>' : '') + '</td></tr>'));
+    (TIPOS[d.tipo] ? '<span class="tipo" style="background:' + TIPOS[d.tipo].color + ';color:' + TIPOS[d.tipo].tinta + '">' + TIPOS[d.tipo].emoji + ' ' + TIPOS[d.tipo].nombre + '</span>' : '') +
+    '</td><td class="acciones">' + btnQuitar(d) + '</td></tr>'));
 }
 for (const id of ['fq', 'ftipo', 'fev', 'fstaff']) document.getElementById(id).addEventListener('input', pinta);
 pinta();
+const mev = document.getElementById('mev');
+if (mev) { mev.addEventListener('change', pintaRoster); pintaRoster(); }
 </script></body></html>`;
 }
 

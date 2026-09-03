@@ -15,7 +15,7 @@ import QRCode from "qrcode";
 import { leerEventos, leerAsistencias, crearEvento, alternarEvento, buscarEvento, registrar,
          normMatricula, esTipo, renderAdmin, renderFormulario, renderResultado, renderQR,
          renderCSV as renderAsistenciaCSV, borrarEvento, renderConfirmarBorrado, esStaff,
-         type TipoId } from "./eventos";
+         quitarAsistencia, cambiarStaff, listaPersonas, type TipoId } from "./eventos";
 
 const app = express();
 app.use(cors());
@@ -266,6 +266,59 @@ app.post("/eventos/alternar", express.urlencoded({ extended: false }), (req, res
   res.redirect(volverEventos(req, ev
     ? `✓ ${ev.titulo}: registro ${ev.abierto ? "reabierto" : "cerrado"}`
     : "No se encontró ese evento."));
+});
+
+// acciones del panel sobre asistencias (con clave). Van ANTES de /asistencia/:id
+// para que "staff", "quitar" y "manual" no se interpreten como ids de evento.
+app.post("/asistencia/staff", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const b = req.body as { matricula?: string; staff?: string };
+  const hacer = b.staff === "si";
+  const r = cambiarStaff(String(b.matricula ?? ""), hacer);
+  res.redirect(volverEventos(req, r
+    ? `✓ ${r.nombre} ahora ${hacer ? "es staff" : "cuenta como asistente"} (${r.n} registro${r.n === 1 ? "" : "s"})`
+    : "No se encontró esa matrícula."));
+});
+app.post("/asistencia/quitar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const b = req.body as { evento?: string; matricula?: string };
+  const evId = String(b.evento ?? "");
+  const r = idOk(evId) ? quitarAsistencia(evId, String(b.matricula ?? "")) : null;
+  res.redirect(volverEventos(req, r
+    ? `✓ Se quitó la asistencia de ${r.nombre} a ${buscarEvento(evId)?.titulo ?? "ese evento"}`
+    : "No se encontró ese registro."));
+});
+const ManualSchema = z.object({
+  evento: z.string().min(4).max(12),
+  matriculas: z.union([z.string(), z.array(z.string())]).optional(),
+  nombre: z.string().trim().max(80).optional().default(""),
+  matricula: z.string().trim().max(14).optional().default(""),
+  otroStaff: z.string().optional(),
+});
+app.post("/asistencia/manual", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const parsed = ManualSchema.safeParse(req.body);
+  const ev = parsed.success && idOk(parsed.data.evento) ? buscarEvento(parsed.data.evento) : undefined;
+  if (!parsed.success || !ev) return res.redirect(volverEventos(req, "No se encontró ese evento."));
+  const d = parsed.data;
+  const conocidas = new Map(listaPersonas(leerAsistencias()).map((p) => [p.matricula, p.nombre]));
+  const lote: { nombre: string; matricula: string; staff: boolean }[] = [];
+  const mats = d.matriculas === undefined ? [] : Array.isArray(d.matriculas) ? d.matriculas : [d.matriculas];
+  for (const m of mats) {
+    const nombre = conocidas.get(normMatricula(m));
+    if (nombre) lote.push({ nombre, matricula: m, staff: true });
+  }
+  if (d.nombre.length >= 3 && normMatricula(d.matricula).length >= 4) {
+    lote.push({ nombre: d.nombre, matricula: d.matricula, staff: d.otroStaff === "on" });
+  }
+  if (!lote.length) return res.redirect(volverEventos(req, "Palomea a alguien del staff o escribe nombre y matrícula."));
+  let ok = 0, dup = 0;
+  for (const p of lote) {
+    const r = registrar(ev.id, p.nombre, p.matricula, p.staff, true);
+    if (r === "ok") ok++; else if (r === "duplicado") dup++;
+  }
+  res.redirect(volverEventos(req, `✓ ${ok} asistencia${ok === 1 ? "" : "s"} registrada${ok === 1 ? "" : "s"} en ${ev.titulo}` +
+    (dup ? ` · ${dup} ya estaba${dup === 1 ? "" : "n"}` : "")));
 });
 
 // formulario público (sin clave): nombre + matrícula

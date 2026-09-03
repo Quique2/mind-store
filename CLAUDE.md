@@ -55,6 +55,13 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   `POST /eventos/borrar` con `confirmar=si` borra el evento y sus asistencias.
   Doble clic al crear: el formulario se bloquea y `crearEvento` devuelve el evento
   idéntico creado en los últimos 2 min en vez de duplicarlo.
+- Gestión desde /eventos: `POST /asistencia/staff` (persona → staff/asistente en TODOS
+  sus registros), `POST /asistencia/quitar` (un registro; sin registros la persona
+  desaparece, no hay tabla de personas) y `POST /asistencia/manual` (captura desde el
+  panel: roster de staff palomeable + "otra persona"; funciona con evento cerrado).
+  Esas tres rutas van ANTES de `/asistencia/:id` o el id se las come.
+- Las tablas dinámicas del panel usan <thead>/<tbody> explícitos: insertar <tr> en
+  <table> crea un tbody por fila y las filas se duplican al filtrar (bug 2026-09-02).
 - Las rutas nuevas van SIEMPRE antes del `app.get("*")` del SPA.
 
 ## Panel ejecutivo y catálogo editable
