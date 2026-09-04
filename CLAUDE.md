@@ -82,6 +82,21 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   ve la tienda y el checkout; `/admin/productos/restaurar` vuelve al de git.
 - Los botones rápidos de /cuentas se generan del catálogo. Navegación común
   Panel · Cuentas · Eventos en `api/src/ui.ts`.
+## Galería y Juntas (pestañas de Eventos: Eventos · Galería · Juntas)
+- Galería (`api/src/galeria.ts`): fotos/videos en `/data/galeria` (volumen) + `galeria.json`;
+  ver es PÚBLICO (`/galeria`, `?evento=id` filtra), subir/borrar con clave. Subida multipart
+  con multer (`/galeria/subir`, campos `archivo` + `miniatura` jpg, 80 MB); las fotos se
+  comprimen en el navegador (1920 px) y la miniatura (480 px) también; para videos el
+  navegador captura un fotograma. Enlaces (`/galeria/enlace`): YouTube y Drive se incrustan
+  con miniatura; carpetas de Drive solo abren. Archivos servidos en `/galeria/archivo/<nombre>`
+  (solo nombres `[a-z0-9]+(_t)?.ext`). Patrón tomado de tap-web (volumen + app).
+- Juntas de staff: mismo motor que eventos con `tipo: "junta"` (TIPOS.junta). `/juntas` =
+  `renderAdmin(..., "juntas")`: solo juntas, botón «Nueva junta», «Pasar lista» con el roster
+  de staff, ranking con % de asistencia. Todo registro en una junta es staff (`registrar`
+  fuerza `staff:true`; el formulario público no pregunta). La pestaña Eventos excluye
+  juntas (`TIPOS_EVENTO`); las acciones llevan `&volver=juntas` para regresar a /juntas.
+  `/eventos.csv?solo=juntas`. El Panel tiene bloque «Juntas de staff» (% del staff conocido).
+
 ## Desarrollo
 ```
 npm install

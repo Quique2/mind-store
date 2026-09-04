@@ -15,7 +15,10 @@ import QRCode from "qrcode";
 import { leerEventos, leerAsistencias, crearEvento, alternarEvento, buscarEvento, registrar,
          normMatricula, esTipo, renderAdmin, renderFormulario, renderResultado, renderQR,
          renderCSV as renderAsistenciaCSV, borrarEvento, renderConfirmarBorrado, esStaff,
-         quitarAsistencia, cambiarStaff, listaPersonas, type TipoId } from "./eventos";
+         quitarAsistencia, cambiarStaff, listaPersonas, esJunta, type TipoId } from "./eventos";
+import multer from "multer";
+import { leerGaleria, agregarItem, borrarItem, infoEnlace, nuevoId, nombreSeguro, renderGaleria,
+         DIR_GALERIA, EXT, LIMITE_MB } from "./galeria";
 
 const app = express();
 app.use(cors());
@@ -236,21 +239,109 @@ app.post("/admin/productos/restaurar", express.urlencoded({ extended: false }), 
 // ---------------- Asistencia a eventos (happy midweek, stand, neurart, neurocharla) ----------------
 const urlBase = (req: express.Request) =>
   process.env.PUBLIC_URL ?? `${req.protocol}://${req.get("host")}`;
+// las acciones lanzadas desde la pestaña Juntas traen &volver=juntas y regresan ahí
 const volverEventos = (req: express.Request, aviso: string) =>
-  `/eventos?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(aviso)}`;
+  `/${req.query.volver === "juntas" ? "juntas" : "eventos"}?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(aviso)}`;
 const idOk = (id: string) => /^[a-z0-9_-]{4,12}$/i.test(id);
 
 app.get("/eventos", (req, res) => {
   if (!claveOk(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
   const ok = req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
   res.type("html").send(renderAdmin(leerEventos(), leerAsistencias(), String(req.query.clave),
-                                    urlBase(req), ok));
+                                    urlBase(req), ok, "eventos"));
+});
+app.get("/juntas", (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
+  const ok = req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
+  res.type("html").send(renderAdmin(leerEventos(), leerAsistencias(), String(req.query.clave),
+                                    urlBase(req), ok, "juntas"));
 });
 
 app.get("/eventos.csv", (req, res) => {
   if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
-  res.type("text/csv").attachment("asistencia-mind.csv")
-     .send(renderAsistenciaCSV(leerEventos(), leerAsistencias()));
+  const soloJuntas = req.query.solo === "juntas";
+  const evs = leerEventos().filter((e) => esJunta(e) === soloJuntas);
+  const ids = new Set(evs.map((e) => e.id));
+  res.type("text/csv").attachment(soloJuntas ? "juntas-mind.csv" : "asistencia-mind.csv")
+     .send(renderAsistenciaCSV(evs, leerAsistencias().filter((a) => ids.has(a.evento))));
+});
+
+// ---------------- Galería: ver es público; subir y borrar requieren clave ----------------
+app.use("/galeria/archivo", (req, res, next) => {
+  if (!nombreSeguro(req.path.slice(1))) return res.status(404).end();
+  next();
+}, express.static(DIR_GALERIA, { maxAge: "30d", immutable: true, index: false }));
+
+app.get("/galeria", (req, res) => {
+  const clave = claveOk(req) ? String(req.query.clave) : null;
+  const filtro = String(req.query.evento ?? "");
+  const ok = clave && req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
+  res.type("html").send(renderGaleria(leerGaleria(), leerEventos(), clave,
+                                      filtro === "sin" || idOk(filtro) ? filtro : "", urlBase(req), ok));
+});
+
+const subida = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => { fs.mkdirSync(DIR_GALERIA, { recursive: true }); cb(null, DIR_GALERIA); },
+    filename: (req, file, cb) => {
+      const id = (req as express.Request & { galeriaId: string }).galeriaId;
+      cb(null, file.fieldname === "miniatura" ? `${id}_t.jpg` : `${id}.${EXT[file.mimetype]}`);
+    },
+  }),
+  limits: { fileSize: LIMITE_MB * 1024 * 1024, files: 2 },
+  fileFilter: (_req, file, cb) => {
+    const ok = file.fieldname === "miniatura" ? file.mimetype === "image/jpeg" : Boolean(EXT[file.mimetype]);
+    if (ok) cb(null, true); else cb(new Error(`tipo no permitido: ${file.mimetype}`));
+  },
+});
+app.post("/galeria/subir",
+  (req, res, next) => {
+    if (!claveOk(req)) return res.status(401).json({ ok: false, error: "clave incorrecta" });
+    (req as express.Request & { galeriaId: string }).galeriaId = nuevoId();
+    next();
+  },
+  (req, res, next) => subida.fields([{ name: "archivo", maxCount: 1 }, { name: "miniatura", maxCount: 1 }])(req, res, (err: unknown) => {
+    if (err) return res.status(400).json({ ok: false, error: err instanceof Error ? err.message : "no se pudo subir" });
+    next();
+  }),
+  (req, res) => {
+    const files = req.files as Record<string, Express.Multer.File[] | undefined>;
+    const archivo = files.archivo?.[0];
+    if (!archivo) return res.status(400).json({ ok: false, error: "falta el archivo" });
+    const b = req.body as { evento?: string; titulo?: string };
+    const evento = b.evento && idOk(b.evento) && buscarEvento(b.evento) ? b.evento : "";
+    const id = (req as express.Request & { galeriaId: string }).galeriaId;
+    agregarItem({ id, tipo: archivo.mimetype.startsWith("video/") ? "video" : "foto", evento,
+                  titulo: String(b.titulo ?? "").trim().slice(0, 80), archivo: archivo.filename,
+                  miniatura: files.miniatura?.[0]?.filename, mime: archivo.mimetype, bytes: archivo.size,
+                  creado: new Date().toISOString() });
+    res.json({ ok: true, id });
+  });
+
+const EnlaceSchema = z.object({
+  url: z.string().trim().url().max(500).refine((u) => /^https?:\/\//i.test(u), "http(s)"),
+  titulo: z.string().trim().max(80).optional().default(""),
+  evento: z.string().max(12).optional().default(""),
+});
+const volverGaleria = (req: express.Request, aviso: string, evento = "") =>
+  `/galeria?clave=${encodeURIComponent(String(req.query.clave))}${evento ? `&evento=${encodeURIComponent(evento)}` : ""}&ok=${encodeURIComponent(aviso)}`;
+app.post("/galeria/enlace", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const parsed = EnlaceSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).send("Enlace inválido. Regresa y revisa el formulario.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; no se guardó.");
+  const d = parsed.data;
+  const evento = d.evento && idOk(d.evento) && buscarEvento(d.evento) ? d.evento : "";
+  const info = infoEnlace(d.url);
+  agregarItem({ id: nuevoId(), tipo: "enlace", evento, titulo: d.titulo || info.proveedor, url: d.url,
+                embed: info.embed, miniatura: info.miniatura, creado: new Date().toISOString() });
+  res.redirect(volverGaleria(req, `✓ Enlace agregado (${info.proveedor})`, evento));
+});
+app.post("/galeria/borrar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const id = String((req.body as { id?: string }).id ?? "");
+  const item = /^[a-z0-9]{6,20}$/.test(id) ? borrarItem(id) : null;
+  res.redirect(volverGaleria(req, item ? "✓ Elemento borrado de la galería" : "No se encontró ese elemento.", item?.evento));
 });
 
 const EventoSchema = z.object({

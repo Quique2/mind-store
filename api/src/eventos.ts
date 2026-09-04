@@ -1,11 +1,13 @@
 // Asistencia a eventos de MIND: un clic crea el evento y su enlace público,
 // la gente se registra desde el celular (nombre + matrícula) y el panel admin
 // filtra por evento / persona y arma el ranking de asistencia.
+// Las JUNTAS de staff usan el mismo motor (tipo "junta") pero viven en su propia
+// pestaña y todo el que se registra en una junta cuenta como staff.
 // Datos en el disco persistente de Railway (DATA_DIR), como cuentas.
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { NAV_CSS, navAdmin } from "./ui";
+import { NAV_CSS, TABS_CSS, navAdmin, tabsEventos } from "./ui";
 
 export interface Evento {
   id: string;
@@ -29,9 +31,13 @@ export const TIPOS = {
   stand:       { nombre: "Stand",         color: "#29A3C7", tinta: "#0b3140", emoji: "🛍️" },
   neurart:     { nombre: "NeurArt",       color: "#EC4899", tinta: "#4a0f2b", emoji: "🎨" },
   neurocharla: { nombre: "NeuroCharla",   color: "#8BC53F", tinta: "#23400a", emoji: "🧠" },
+  junta:       { nombre: "Junta",         color: "#1C2260", tinta: "#ffffff", emoji: "📋" },
 } as const;
 export type TipoId = keyof typeof TIPOS;
 export const esTipo = (t: string): t is TipoId => t in TIPOS;
+/** Tipos que se ofrecen en la pestaña Eventos (las juntas tienen su pestaña). */
+export const TIPOS_EVENTO = (Object.keys(TIPOS) as TipoId[]).filter((t) => t !== "junta");
+export const esJunta = (e: Evento) => e.tipo === "junta";
 
 const DIR = process.env.DATA_DIR ?? "/data";
 const F_EV = path.join(DIR, "eventos.json");
@@ -103,7 +109,7 @@ export function registrar(eventoId: string, nombre: string, matricula: string, s
   const lista = leerAsistencias();
   if (lista.some((a) => a.evento === eventoId && a.matricula === mat)) return "duplicado" as const;
   lista.push({ evento: eventoId, nombre: limpiar(nombre), matricula: mat,
-               ts: new Date().toISOString(), staff });
+               ts: new Date().toISOString(), staff: esJunta(ev) ? true : staff });
   escribirJSON(F_AS, lista);
   return "ok" as const;
 }
@@ -191,6 +197,7 @@ const badge = (t: TipoId) =>
 // ---------------- formulario público ----------------
 export function renderFormulario(ev: Evento, error?: string): string {
   const t = TIPOS[ev.tipo];
+  const junta = esJunta(ev);
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(ev.titulo)} · MIND</title>${FUENTE}<style>${CSS_BASE}
@@ -205,7 +212,7 @@ form { display:grid; gap:14px; }
 .seg input:focus-visible + label { outline:2px solid #2E4BC6; outline-offset:1px; }
 </style></head><body>
 <header><p>${t.emoji} ${esc(t.nombre)} · ${esc(fechaBonita(ev.fecha))}</p><h1>${esc(ev.titulo)}</h1>
-<p>Registra tu asistencia — toma 10 segundos</p></header>
+<p>${junta ? "Registra tu asistencia a la junta" : "Registra tu asistencia"} — toma 10 segundos</p></header>
 <main><div class="tarjeta">
 ${error ? `<div class="err" style="margin-bottom:12px">${esc(error)}</div>` : ""}
 <form method="post" action="/asistencia/${esc(ev.id)}" autocomplete="on">
@@ -214,11 +221,11 @@ ${error ? `<div class="err" style="margin-bottom:12px">${esc(error)}</div>` : ""
   <div><label for="matricula">Matrícula</label>
     <input id="matricula" name="matricula" required maxlength="12" placeholder="A0XXXXXXX"
       style="text-transform:uppercase" autocapitalize="characters" autocomplete="off"></div>
-  <div><label>¿Eres parte del staff de MIND?</label>
+  ${junta ? '<input type="hidden" name="staff" value="si">' : `<div><label>¿Eres parte del staff de MIND?</label>
     <div class="seg">
       <input type="radio" id="st-no" name="staff" value="no" checked><label for="st-no">No, vengo al evento</label>
       <input type="radio" id="st-si" name="staff" value="si"><label for="st-si">Sí, soy staff</label>
-    </div></div>
+    </div></div>`}
   <input type="text" name="sitio" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true">
   <button class="btn" type="submit">Registrar mi asistencia</button>
 </form></div>${PUNTOS}
@@ -230,7 +237,7 @@ export function renderResultado(ev: Evento, tipo: "ok" | "duplicado" | "cerrado"
                                 staff = false): string {
   const t = TIPOS[ev.tipo];
   const pila = esc(nombre.split(" ")[0] || "");
-  const msg = tipo === "ok" && staff
+  const msg = tipo === "ok" && (staff || esJunta(ev))
     ? { h: "¡Registrado, staff! 💪", p: `Gracias por hacer posible <b>${esc(ev.titulo)}</b>, ${pila}.` }
     : tipo === "ok"
     ? { h: "¡Registrado! 🎉", p: `Gracias por venir a <b>${esc(ev.titulo)}</b>, ${pila}.` }
@@ -246,20 +253,28 @@ export function renderResultado(ev: Evento, tipo: "ok" | "duplicado" | "cerrado"
 <p style="margin-top:14px;font-size:13px;color:#6A6F98">Síguenos: <a href="https://quique2.github.io/mind/" style="color:#2E4BC6;font-weight:600">enlaces de MIND</a></p></div>${PUNTOS}</main></body></html>`;
 }
 
-// ---------------- panel admin ----------------
-export function renderAdmin(evs: Evento[], asis: Asistencia[], clave: string,
-                            base: string, aviso?: string): string {
+// ---------------- panel admin (pestañas Eventos y Juntas) ----------------
+export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], clave: string,
+                            base: string, aviso?: string, modo: "eventos" | "juntas" = "eventos"): string {
+  const juntas = modo === "juntas";
+  // la pestaña Eventos ve solo eventos; la pestaña Juntas solo juntas (mismo motor)
+  const evs = todosEv.filter((e) => esJunta(e) === juntas);
+  const ids = new Set(evs.map((e) => e.id));
+  const asis = todasAsis.filter((a) => ids.has(a.evento));
   const conteo = new Map<string, number>();
   const conteoStaff = new Map<string, number>();
   for (const a of asis) {
     const m = esStaff(a) ? conteoStaff : conteo;
     m.set(a.evento, (m.get(a.evento) ?? 0) + 1);
   }
+  const cuenta = (id: string) => (conteo.get(id) ?? 0) + (juntas ? (conteoStaff.get(id) ?? 0) : 0);
   const evOrden = [...evs].sort((a, b) => (a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0));
-  const publico = asis.filter((a) => !esStaff(a));
+  const publico = juntas ? asis : asis.filter((a) => !esStaff(a));
   const personas = new Set(publico.map((a) => a.matricula)).size;
-  const q = `?clave=${encodeURIComponent(clave)}`;
-  const staffRoster = listaPersonas(asis).filter((p) => p.staff);
+  // la pestaña Juntas regresa a /juntas después de cada acción
+  const q = `?clave=${encodeURIComponent(clave)}${juntas ? "&volver=juntas" : ""}`;
+  // el staff de MIND = quien se ha registrado como staff en algún evento o junta
+  const staffRoster = listaPersonas(todasAsis).filter((p) => p.staff);
   const primerAbierto = evOrden.find((e) => e.abierto)?.id;
   const opcionesEv = evOrden.map((e) =>
     `<option value="${esc(e.id)}"${e.id === primerAbierto ? " selected" : ""}>${esc(fechaBonita(e.fecha))} · ${esc(e.titulo)}${e.abierto ? "" : " (cerrado)"}</option>`).join("");
@@ -268,14 +283,15 @@ export function renderAdmin(evs: Evento[], asis: Asistencia[], clave: string,
     const wa = `https://wa.me/?text=${encodeURIComponent(`${TIPOS[e.tipo].emoji} ${e.titulo}\nRegistra tu asistencia aquí 👉 ${url}`)}`;
     return `<tr data-id="${esc(e.id)}"><td>${esc(fechaBonita(e.fecha))}</td><td>${badge(e.tipo)}</td>
 <td><b>${esc(e.titulo)}</b><div class="det"><code>${esc(url)}</code></div></td>
-<td class="num">${conteo.get(e.id) ?? 0}${conteoStaff.get(e.id) ? `<div class="det">+${conteoStaff.get(e.id)} staff</div>` : ""}</td>
+<td class="num">${cuenta(e.id)}${!juntas && conteoStaff.get(e.id) ? `<div class="det">+${conteoStaff.get(e.id)} staff</div>` : ""}</td>
 <td>${e.abierto ? '<span class="est abierto">abierto</span>' : '<span class="est cerrado">cerrado</span>'}</td>
 <td class="acc"><a class="btn sec" href="${wa}" target="_blank" rel="noopener">WhatsApp</a>
 <button class="btn sec" type="button" onclick="copiar('${esc(url)}',this)">Copiar</button>
 <a class="btn sec" href="/asistencia/${esc(e.id)}/qr" target="_blank">QR</a>
+${juntas ? "" : `<a class="btn sec" href="/galeria?evento=${esc(e.id)}&clave=${encodeURIComponent(clave)}" title="Fotos y videos de este evento">Fotos</a>`}
 <form method="post" action="/eventos/alternar${q}" style="display:inline"><input type="hidden" name="id" value="${esc(e.id)}">
 <button class="btn sec" type="submit">${e.abierto ? "Cerrar" : "Reabrir"}</button></form>
-<a class="btn sec peligro" href="/eventos/borrar${q}&id=${esc(e.id)}" title="Borrar evento (pide confirmación)">Borrar</a></td></tr>`;
+<a class="btn sec peligro" href="/eventos/borrar${q}&id=${esc(e.id)}" title="Borrar (pide confirmación)">Borrar</a></td></tr>`;
   }).join("");
   const datos = asis.map((a) => {
     const e = evs.find((x) => x.id === a.evento);
@@ -283,11 +299,15 @@ export function renderAdmin(evs: Evento[], asis: Asistencia[], clave: string,
              titulo: e?.titulo ?? "(evento borrado)", tipo: e?.tipo ?? "", fecha: e?.fecha ?? "" };
   });
   const hoy = new Date().toLocaleDateString("sv-SE");
-  const botonesTipo = (Object.keys(TIPOS) as TipoId[]).map((t) =>
-    `<button class="crear" type="submit" name="tipo" value="${t}" style="background:${TIPOS[t].color};color:${TIPOS[t].tinta}">${TIPOS[t].emoji} ${TIPOS[t].nombre}</button>`).join("");
+  const botonesTipo = juntas
+    ? `<button class="crear" type="submit" name="tipo" value="junta" style="background:${TIPOS.junta.color};color:${TIPOS.junta.tinta}">📋 Nueva junta</button>`
+    : TIPOS_EVENTO.map((t) =>
+      `<button class="crear" type="submit" name="tipo" value="${t}" style="background:${TIPOS[t].color};color:${TIPOS[t].tinta}">${TIPOS[t].emoji} ${TIPOS[t].nombre}</button>`).join("");
+  const cosa = juntas ? "junta" : "evento";
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Eventos MIND</title>${FUENTE}
-<style>${CSS_BASE}${NAV_CSS}
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>${juntas ? "Juntas de staff" : "Eventos"} MIND</title>${FUENTE}
+<style>${CSS_BASE}${NAV_CSS}${TABS_CSS}
+${juntas ? "header { background:linear-gradient(140deg,#1C2260,#2E4BC6 60%,#232D93); }" : ""}
 .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; margin:16px 0; }
 .stat { background:#fff; border:1px solid #E4E1D2; border-radius:14px; padding:12px 14px; }
 .stat small { font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:#6A6F98; }
@@ -308,7 +328,7 @@ tr:last-child td { border-bottom:none; }
 .est.abierto { background:#E8F3D9; color:#3F6B10; } .est.cerrado { background:#EEECE3; color:#6A6F98; }
 .tabla-scroll { overflow-x:auto; }
 .rank td:first-child { font-weight:800; color:#2E4BC6; width:34px; }
-.filtros { display:grid; grid-template-columns:2fr 1fr 1.6fr 1fr; gap:10px; margin-bottom:10px; }
+.filtros { display:grid; grid-template-columns:${juntas ? "2fr 1.6fr" : "2fr 1fr 1.6fr 1fr"}; gap:10px; margin-bottom:10px; }
 @media (max-width:640px){ .filtros { grid-template-columns:1fr; } }
 .vacio { color:#8A8FB5; font-size:13px; padding:12px; }
 .btn.peligro { color:#A03434; background:#FBECEC; border-color:#F0CFCF; } .btn.peligro:hover { background:#F5D9D9; }
@@ -322,66 +342,71 @@ tr:last-child td { border-bottom:none; }
 .check input { width:18px; height:18px; min-height:0; }
 .mini { font-size:11.5px; padding:5px 10px; min-height:30px; }
 td.acciones { white-space:nowrap; } td.acciones form { display:inline; }
+.pct { font-size:11px; color:#6A6F98; }
 </style></head><body>
-<header>${navAdmin(clave, "eventos")}<h1>Eventos MIND</h1><p>Crea el evento, comparte el enlace, y la asistencia se registra sola</p></header>
+<header>${navAdmin(clave, "eventos")}<h1>${juntas ? "Juntas de staff" : "Eventos MIND"}</h1><p>${juntas
+  ? "Crea la junta, palomea a quienes estuvieron o comparte el enlace, y el historial de asistencia del staff se arma solo"
+  : "Crea el evento, comparte el enlace, y la asistencia se registra sola"}</p>${tabsEventos(clave, juntas ? "juntas" : "eventos")}</header>
 <main>
 ${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
 <div class="stats">
-  <div class="stat"><small>Eventos</small><b>${evs.length}</b></div>
+  <div class="stat"><small>${juntas ? "Juntas" : "Eventos"}</small><b>${evs.length}</b></div>
   <div class="stat"><small>Asistencias</small><b>${publico.length}</b></div>
-  <div class="stat"><small>Personas distintas</small><b>${personas}</b></div>
-  <div class="stat"><small>Registros de staff</small><b>${asis.length - publico.length}</b></div>
+  <div class="stat"><small>${juntas ? "Staff que ha asistido" : "Personas distintas"}</small><b>${personas}</b></div>
+  ${juntas
+    ? `<div class="stat"><small>Staff de MIND</small><b>${staffRoster.length}</b></div>`
+    : `<div class="stat"><small>Registros de staff</small><b>${asis.length - publico.length}</b></div>`}
 </div>
 
-<h2>Crear evento</h2>
+<h2>${juntas ? "Nueva junta" : "Crear evento"}</h2>
 <form class="tarjeta" method="post" action="/eventos/nuevo${q}"
   onsubmit="if (this.dataset.enviando) return false; this.dataset.enviando = '1'; setTimeout(() => this.querySelectorAll('button').forEach((b) => { b.disabled = true; b.style.opacity = .55; }), 0);">
   <div class="fila">
-    <div><label for="titulo">Título (opcional)</label><input id="titulo" name="titulo" maxlength="80" placeholder="p. ej. NeuroCharla: TDAH en la uni"></div>
+    <div><label for="titulo">Título (opcional)</label><input id="titulo" name="titulo" maxlength="80" placeholder="${juntas ? "p. ej. Junta semanal · planeación NeurArt" : "p. ej. NeuroCharla: TDAH en la uni"}"></div>
     <div><label for="fecha">Fecha</label><input id="fecha" name="fecha" type="date" value="${hoy}" required></div>
   </div>
-  <label style="margin-top:12px">Un toque en el tipo y listo</label>
+  <label style="margin-top:12px">${juntas ? "Un toque y queda creada con su enlace y QR" : "Un toque en el tipo y listo"}</label>
   <div class="crear-grid">${botonesTipo}</div>
 </form>
 
-<h2>Eventos</h2>
+<h2>${juntas ? "Juntas" : "Eventos"}</h2>
 <div class="tabla-scroll"><table>
-<tr><th>Fecha</th><th>Tipo</th><th>Evento · enlace</th><th class="num">Asist.</th><th>Estado</th><th></th></tr>
-${filasEv || '<tr><td colspan="6" class="vacio">Todavía no hay eventos — crea el primero arriba.</td></tr>'}
+<tr><th>Fecha</th><th>Tipo</th><th>${juntas ? "Junta" : "Evento"} · enlace</th><th class="num">Asist.</th><th>Estado</th><th></th></tr>
+${filasEv || `<tr><td colspan="6" class="vacio">Todavía no hay ${juntas ? "juntas" : "eventos"} — crea ${juntas ? "la primera" : "el primero"} arriba.</td></tr>`}
 </table></div>
 
-<h2>Registrar asistencia desde aquí</h2>
+<h2>${juntas ? "Pasar lista" : "Registrar asistencia desde aquí"}</h2>
 ${evs.length ? `<form class="tarjeta" method="post" action="/asistencia/manual${q}" id="manual">
   <div class="fila">
-    <div><label for="mev">Agregar asistencia al evento de:</label><select id="mev" name="evento" required>${opcionesEv}</select></div>
+    <div><label for="mev">Agregar asistencia a la ${cosa}:</label><select id="mev" name="evento" required>${opcionesEv}</select></div>
   </div>
-  <label style="margin-top:14px">Staff de MIND</label>
+  <label style="margin-top:14px">Staff de MIND${juntas ? " · palomea a quienes están" : ""}</label>
   ${staffRoster.length
     ? `<div class="roster">${staffRoster.map((p) =>
         `<label class="persona"><input type="checkbox" name="matriculas" value="${esc(p.matricula)}"><span>${esc(p.nombre)}<small>${esc(p.matricula)}</small></span></label>`).join("")}</div>`
     : '<p class="vacio">Todavía nadie está marcado como staff. Cuando alguien se registre como staff, o lo marques abajo con «Hacer staff», aparecerá aquí para palomearlo.</p>'}
-  <label style="margin-top:14px">Otra persona (opcional)</label>
+  <label style="margin-top:14px">${juntas ? "Alguien nuevo en el staff (opcional)" : "Otra persona (opcional)"}</label>
   <div class="fila">
     <div><input name="nombre" maxlength="80" placeholder="Nombre completo" autocomplete="off"></div>
     <div><input name="matricula" maxlength="12" placeholder="Matrícula" style="text-transform:uppercase" autocomplete="off"></div>
-    <div class="check"><label><input type="checkbox" name="otroStaff"> Es staff</label></div>
+    ${juntas ? '<input type="hidden" name="otroStaff" value="on">' : '<div class="check"><label><input type="checkbox" name="otroStaff"> Es staff</label></div>'}
   </div>
   <div style="margin-top:14px"><button class="btn" type="submit">Registrar asistencia</button>
-    <span class="det" style="display:inline;margin-left:10px">Funciona aunque el evento esté cerrado · una matrícula cuenta una vez por evento</span></div>
-</form>` : '<p class="vacio">Crea un evento primero.</p>'}
+    <span class="det" style="display:inline;margin-left:10px">Funciona aunque ${juntas ? "la junta esté cerrada" : "el evento esté cerrado"} · una matrícula cuenta una vez por ${cosa}</span></div>
+</form>` : `<p class="vacio">Crea ${juntas ? "una junta" : "un evento"} primero.</p>`}
 
 <h2>Asistencia</h2>
 <div class="filtros">
   <input id="fq" placeholder="Buscar por nombre o matrícula…">
-  <select id="ftipo"><option value="">Todos los tipos</option>
-    ${(Object.keys(TIPOS) as TipoId[]).map((t) => `<option value="${t}">${TIPOS[t].emoji} ${TIPOS[t].nombre}</option>`).join("")}</select>
-  <select id="fev"><option value="">Todos los eventos</option>
+  <select id="ftipo"${juntas ? " hidden" : ""}><option value="">Todos los tipos</option>
+    ${TIPOS_EVENTO.map((t) => `<option value="${t}">${TIPOS[t].emoji} ${TIPOS[t].nombre}</option>`).join("")}</select>
+  <select id="fev"><option value="">${juntas ? "Todas las juntas" : "Todos los eventos"}</option>
     ${evOrden.map((e) => `<option value="${esc(e.id)}">${esc(fechaBonita(e.fecha))} · ${esc(e.titulo)}</option>`).join("")}</select>
-  <select id="fstaff"><option value="no">Solo asistentes</option><option value="si">Solo staff</option><option value="">Asistentes y staff</option></select>
+  <select id="fstaff"${juntas ? " hidden" : ""}>${juntas ? '<option value="" selected>Todos</option>' : '<option value="no">Solo asistentes</option><option value="si">Solo staff</option><option value="">Asistentes y staff</option>'}</select>
 </div>
-<div class="tabla-scroll"><table class="rank" id="ranking"><thead><tr><th>#</th><th>Persona</th><th>Matrícula</th><th class="num">Eventos</th><th>Tipos</th><th></th></tr></thead><tbody></tbody></table></div>
-<p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">Ranking completo según los filtros de arriba (<b id="nrank">0 personas</b>) · «Hacer staff» / «Quitar de staff» cambia a la persona en todos sus registros · <a id="csv" href="/eventos.csv${q}" style="color:#2E4BC6;font-weight:600">descargar CSV</a></p>
-<div class="tabla-scroll"><table id="lista"><thead><tr><th>Cuándo</th><th>Nombre</th><th>Matrícula</th><th>Evento</th><th>Tipo</th><th></th></tr></thead><tbody></tbody></table></div>
+<div class="tabla-scroll"><table class="rank" id="ranking"><thead><tr><th>#</th><th>Persona</th><th>Matrícula</th><th class="num">${juntas ? "Juntas" : "Eventos"}</th><th>${juntas ? "Asistencia" : "Tipos"}</th><th></th></tr></thead><tbody></tbody></table></div>
+<p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">Ranking completo según los filtros de arriba (<b id="nrank">0 personas</b>)${juntas ? "" : " · «Hacer staff» / «Quitar de staff» cambia a la persona en todos sus registros"} · <a id="csv" href="/eventos.csv?clave=${encodeURIComponent(clave)}${juntas ? "&solo=juntas" : ""}" style="color:#2E4BC6;font-weight:600">descargar CSV</a></p>
+<div class="tabla-scroll"><table id="lista"><thead><tr><th>Cuándo</th><th>Nombre</th><th>Matrícula</th><th>${juntas ? "Junta" : "Evento"}</th><th>Tipo</th><th></th></tr></thead><tbody></tbody></table></div>
 <p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">«Quitar» borra ese registro; si a la persona no le queda ninguno, desaparece del historial.</p>
 ${PUNTOS}
 </main>
@@ -389,6 +414,8 @@ ${PUNTOS}
 const TIPOS = ${jsonSeguro(TIPOS)};
 const DATOS = ${jsonSeguro(datos)};
 const Q = ${jsonSeguro(q)};
+const JUNTAS = ${juntas ? "true" : "false"};
+const TOTAL_EV = ${evs.length};
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // confirmación antes de quitar un registro (el texto viene en data-confirmar)
 document.addEventListener('submit', (e) => {
@@ -420,11 +447,13 @@ function pinta() {
     const p = por.get(d.mat) ?? { nombre: d.nombre, mat: d.mat, evs: new Set(), tipos: new Set(), staff: false };
     p.evs.add(d.ev); if (d.tipo) p.tipos.add(d.tipo); p.nombre = d.nombre; p.staff = p.staff || d.staff; por.set(d.mat, p);
   }
-  const sello = (s) => s ? '<span class="staff">STAFF</span>' : '';
+  const sello = (s) => s && !JUNTAS ? '<span class="staff">STAFF</span>' : '';
   const btnStaff = (p) => '<form method="post" action="/asistencia/staff' + Q + '"><input type="hidden" name="matricula" value="' + esc(p.mat) + '">' +
     '<input type="hidden" name="staff" value="' + (p.staff ? 'no' : 'si') + '"><button class="btn sec mini" type="submit">' + (p.staff ? 'Quitar de staff' : 'Hacer staff') + '</button></form>';
   const btnQuitar = (d) => '<form method="post" action="/asistencia/quitar' + Q + '" data-confirmar="' + esc('¿Quitar la asistencia de ' + d.nombre + ' a «' + d.titulo + '»?') + '">' +
     '<input type="hidden" name="evento" value="' + esc(d.ev) + '"><input type="hidden" name="matricula" value="' + esc(d.mat) + '"><button class="btn sec mini peligro" type="submit">Quitar</button></form>';
+  const tipos = (p) => [...p.tipos].map((x) => TIPOS[x] ? '<span class="tipo" style="background:' + TIPOS[x].color + ';color:' + TIPOS[x].tinta + '">' + TIPOS[x].emoji + ' ' + TIPOS[x].nombre + '</span> ' : '').join('');
+  const pct = (p) => TOTAL_EV ? Math.round(100 * p.evs.size / TOTAL_EV) : 0;
   const rank = [...por.values()].sort((a, b) => b.evs.size - a.evs.size || a.nombre.localeCompare(b.nombre));
   // las filas van SIEMPRE dentro del <tbody>: insertarlas en <table> crea un tbody por fila y se duplican
   const tb = document.querySelector('#ranking tbody');
@@ -432,8 +461,8 @@ function pinta() {
   document.getElementById('nrank').textContent = rank.length + (rank.length === 1 ? ' persona' : ' personas');
   rank.forEach((p, i) => tb.insertAdjacentHTML('beforeend',
     '<tr><td>' + (i + 1) + '</td><td>' + esc(p.nombre) + sello(p.staff) + '</td><td>' + esc(p.mat) + '</td><td class="num">' + p.evs.size + '</td><td>' +
-    [...p.tipos].map((x) => TIPOS[x] ? '<span class="tipo" style="background:' + TIPOS[x].color + ';color:' + TIPOS[x].tinta + '">' + TIPOS[x].emoji + ' ' + TIPOS[x].nombre + '</span> ' : '').join('') +
-    '</td><td class="acciones">' + btnStaff(p) + '</td></tr>'));
+    (JUNTAS ? '<b>' + pct(p) + '%</b> <span class="pct">de ' + TOTAL_EV + ' junta' + (TOTAL_EV === 1 ? '' : 's') + '</span>' : tipos(p)) +
+    '</td><td class="acciones">' + (JUNTAS ? '' : btnStaff(p)) + '</td></tr>'));
   const lb = document.querySelector('#lista tbody');
   lb.innerHTML = '';
   rows.sort((a, b) => (a.ts < b.ts ? 1 : -1)).forEach((d) => lb.insertAdjacentHTML('beforeend',
@@ -459,27 +488,29 @@ export function renderCSV(evs: Evento[], asis: Asistencia[]): string {
     })].join("\n");
 }
 
-// pantalla "¿estás seguro?" antes de borrar un evento y sus asistencias
+// pantalla "¿estás seguro?" antes de borrar un evento o junta y sus asistencias
 export function renderConfirmarBorrado(ev: Evento, nAsis: number, nStaff: number, clave: string): string {
-  const q = `?clave=${encodeURIComponent(clave)}`;
+  const junta = esJunta(ev);
+  const q = `?clave=${encodeURIComponent(clave)}${junta ? "&volver=juntas" : ""}`;
+  const cosa = junta ? "la junta" : "el evento";
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>¿Borrar evento? · MIND</title>${FUENTE}
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>¿Borrar ${cosa}? · MIND</title>${FUENTE}
 <style>${CSS_BASE}${NAV_CSS} header{background:linear-gradient(140deg,#A03434,#5B2A6E 60%,#232D93)} main{max-width:540px}
 .grande{font-size:22px;font-weight:800;margin-bottom:6px} .btn.peligro{background:#A03434} .btn.peligro:hover{background:#7E2626}
 .acciones{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px} ul{margin:12px 0 0 18px;font-size:13.5px;line-height:1.7}
 code{font-family:ui-monospace,monospace;font-size:12px;background:#F3F1E6;padding:1px 5px;border-radius:5px}</style></head><body>
-<header>${navAdmin(clave, "eventos")}<h1>¿Estás seguro?</h1><p>Borrar un evento no se puede deshacer</p></header>
+<header>${navAdmin(clave, "eventos")}<h1>¿Estás seguro?</h1><p>Borrar ${cosa} no se puede deshacer</p></header>
 <main><div class="tarjeta"><div class="grande">Borrar «${esc(ev.titulo)}»</div>
 <p>${badge(ev.tipo)} &nbsp;${esc(fechaBonita(ev.fecha))} · registro ${ev.abierto ? "abierto" : "cerrado"}</p>
 <ul>
-  <li>Se borra el evento y su enlace <code>/asistencia/${esc(ev.id)}</code> deja de funcionar (y su QR también).</li>
-  <li>Se borran sus <b>${nAsis}</b> registro(s) de asistencia${nStaff ? ` (incluye ${nStaff} de staff)` : ""}. No se recuperan.</li>
-  <li>Si solo quieres que nadie más se registre, mejor usa <b>Cerrar</b> en la lista de eventos.</li>
+  <li>Se borra ${cosa} y su enlace <code>/asistencia/${esc(ev.id)}</code> deja de funcionar (y su QR también).</li>
+  <li>Se borran sus <b>${nAsis}</b> registro(s) de asistencia${nStaff && !junta ? ` (incluye ${nStaff} de staff)` : ""}. No se recuperan.</li>
+  <li>Si solo quieres que nadie más se registre, mejor usa <b>Cerrar</b> en la lista.</li>
 </ul>
 <form method="post" action="/eventos/borrar${q}" class="acciones">
   <input type="hidden" name="id" value="${esc(ev.id)}"><input type="hidden" name="confirmar" value="si">
-  <a class="btn sec" href="/eventos${q}">Cancelar</a>
-  <button class="btn peligro" type="submit">Sí, borrar este evento</button>
+  <a class="btn sec" href="${junta ? "/juntas" : "/eventos"}?clave=${encodeURIComponent(clave)}">Cancelar</a>
+  <button class="btn peligro" type="submit">Sí, borrar ${cosa}</button>
 </form></div>${PUNTOS}</main></body></html>`;
 }
 

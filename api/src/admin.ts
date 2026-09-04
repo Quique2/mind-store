@@ -2,7 +2,7 @@
 // y edición del catálogo (precios, altas, bajas, ocultar). Los números se
 // calculan aquí en el servidor; Chart.js solo los pinta en el navegador.
 import { signo, EVENTO_INICIAL, type Mov } from "./cuentas";
-import { TIPOS, fechaBonita, esStaff, type Evento, type Asistencia, type TipoId } from "./eventos";
+import { TIPOS, TIPOS_EVENTO, fechaBonita, esStaff, esJunta, type Evento, type Asistencia, type TipoId } from "./eventos";
 import type { Product } from "./products";
 import { NAV_CSS, navAdmin, LINKTREE, INSTAGRAM, WHATSAPP_GRUPO } from "./ui";
 
@@ -138,12 +138,25 @@ export function calcular(d: DatosPanel) {
   const porGasto = [...gastoMap.entries()].sort((a, b) => b[1] - a[1]).map(([label, y]) => ({ label, y }));
 
   // asistencia: por evento (cronológico) con nuevos vs recurrentes, por tipo, ranking.
-  // El staff se cuenta aparte: no infla la asistencia ni el ranking.
-  const asis = d.asistencias.filter((a) => !esStaff(a));
-  const staff = d.asistencias.filter(esStaff);
-  const evIdx = new Map(d.eventos.map((e) => [e.id, e]));
-  const evOrden = [...d.eventos].sort((a, b) =>
-    a.fecha === b.fecha ? (a.creado < b.creado ? -1 : 1) : (a.fecha < b.fecha ? -1 : 1));
+  // El staff se cuenta aparte: no infla la asistencia ni el ranking. Las juntas de
+  // staff son otra cosa y van en su propio bloque.
+  const eventos = d.eventos.filter((e) => !esJunta(e));
+  const idsEv = new Set(eventos.map((e) => e.id));
+  const asisEv = d.asistencias.filter((a) => idsEv.has(a.evento));
+  const asis = asisEv.filter((a) => !esStaff(a));
+  const staff = asisEv.filter(esStaff);
+  const evIdx = new Map(eventos.map((e) => [e.id, e]));
+  const porFechaCreado = (a: Evento, b: Evento) =>
+    a.fecha === b.fecha ? (a.creado < b.creado ? -1 : 1) : (a.fecha < b.fecha ? -1 : 1);
+  const evOrden = [...eventos].sort(porFechaCreado);
+  // juntas: asistencia por junta y % del staff conocido
+  const juntasOrden = d.eventos.filter(esJunta).sort(porFechaCreado);
+  const staffTotal = new Set(d.asistencias.filter(esStaff).map((a) => a.matricula)).size;
+  const juntas = juntasOrden.map((j) => {
+    const n = d.asistencias.filter((a) => a.evento === j.id).length;
+    return { titulo: j.titulo, corto: fechaBonita(j.fecha), total: n,
+             pct: staffTotal ? Math.round(100 * n / staffTotal) : 0, abierto: j.abierto };
+  });
   const vistos = new Set<string>();
   const asistenciaEventos = evOrden.map((e) => {
     const lista = asis.filter((a) => a.evento === e.id);
@@ -153,7 +166,7 @@ export function calcular(d: DatosPanel) {
              total: lista.length, nuevos, recurrentes: lista.length - nuevos, color: TIPOS[e.tipo].color,
              staff: staff.filter((a) => a.evento === e.id).length };
   });
-  const porTipo = (Object.keys(TIPOS) as TipoId[]).map((t) => ({
+  const porTipo = TIPOS_EVENTO.map((t) => ({
     label: `${TIPOS[t].emoji} ${TIPOS[t].nombre}`, color: TIPOS[t].color,
     y: asis.filter((a) => evIdx.get(a.evento)?.tipo === t).length,
   }));
@@ -175,7 +188,9 @@ export function calcular(d: DatosPanel) {
            ultimosGastos: [...gastos].sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).slice(0, 8),
            nAsis: asis.length, nStaff: staff.length,
            nStaffPersonas: new Set(staff.map((a) => a.matricula)).size,
-           nPersonas: personas.size, abiertos: d.eventos.filter((e) => e.abierto).length,
+           nPersonas: personas.size, abiertos: eventos.filter((e) => e.abierto).length,
+           nEventos: eventos.length, juntas, staffTotal,
+           asisJuntas: juntas.reduce((s, j) => s + j.total, 0),
            ultimos: [...ventas, ...gastos].sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).slice(0, 8),
            evRecientes: [...evOrden].reverse().slice(0, 6) };
 }
@@ -285,7 +300,7 @@ export function renderPanel(d: DatosPanel): string {
     `<span class="tipo" style="background:${TIPOS[t].color};color:${TIPOS[t].tinta}">${TIPOS[t].emoji} ${TIPOS[t].nombre}</span>`;
   const datosJS = {
     semanas: r.semanas, saldo: r.saldo, porEvento: r.porEvento, porProducto: r.porProducto, porGasto: r.porGasto,
-    asistenciaEventos: r.asistenciaEventos, porTipo: r.porTipo,
+    asistenciaEventos: r.asistenciaEventos, porTipo: r.porTipo, juntas: r.juntas,
   };
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Panel MIND</title>
@@ -302,8 +317,8 @@ ${d.stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mi
   <div class="kpi"><small>Últimos 30 días</small><b>${fmt(r.ingresos30)}</b><span>ventas · gastos <span class="rojo">−${fmt(r.gastos30)}</span></span></div>
   <div class="kpi"><small>Gastos</small><b class="rojo">−${fmt(r.gastos)}</b><span>comisiones Stripe ${fmt(r.comisiones)}</span></div>
   <div class="kpi"><small>Ventas</small><b>${r.nVentas}</b><span>ticket promedio ${fmt(r.ticket)}</span></div>
-  <div class="kpi"><small>Eventos</small><b>${d.eventos.length}</b><span>${r.abiertos} con registro abierto</span></div>
-  <div class="kpi"><small>Asistencias</small><b>${r.nAsis}</b><span>${d.eventos.length ? (r.nAsis / d.eventos.length).toFixed(1) : "0"} por evento · sin staff</span></div>
+  <div class="kpi"><small>Eventos</small><b>${r.nEventos}</b><span>${r.abiertos} con registro abierto</span></div>
+  <div class="kpi"><small>Asistencias</small><b>${r.nAsis}</b><span>${r.nEventos ? (r.nAsis / r.nEventos).toFixed(1) : "0"} por evento · sin staff</span></div>
   <div class="kpi"><small>Personas distintas</small><b>${r.nPersonas}</b><span>matrículas únicas</span></div>
   <div class="kpi"><small>Staff</small><b>${r.nStaff}</b><span>${r.nStaffPersonas} persona${r.nStaffPersonas === 1 ? "" : "s"} de staff</span></div>
 </div>
@@ -354,6 +369,16 @@ ${d.stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mi
       r.evRecientes.map((e) => `<tr><td>${esc(fechaBonita(e.fecha))}</td><td>${badge(e.tipo)}<div style="margin-top:3px">${esc(e.titulo)}</div></td><td class="num">${conteo.get(e.id) ?? 0}</td><td><span class="est ${e.abierto ? "abierto" : "cerrado"}">${e.abierto ? "abierto" : "cerrado"}</span></td></tr>`).join("")
     }</table>` : '<p class="vacio">Todavía no hay eventos.</p>'}
     <p class="det" style="margin-top:8px"><a href="/eventos${q}" style="color:#2E4BC6;font-weight:600">Crear eventos y compartir enlaces →</a></p></div>
+</div>
+
+<h2>📋 Juntas de staff <small>${r.juntas.length} junta${r.juntas.length === 1 ? "" : "s"} · ${r.staffTotal} personas de staff · ${r.asisJuntas} asistencias</small></h2>
+<div class="grid2">
+  <div class="graf"><h3>Asistencia por junta <small>% del staff conocido</small></h3><div class="lienzo"><canvas id="c-juntas"></canvas></div></div>
+  <div class="graf"><h3>Últimas juntas</h3>
+    ${r.juntas.length ? `<table><tr><th>Fecha</th><th>Junta</th><th class="num">Asist.</th><th class="num">%</th></tr>${
+      [...r.juntas].reverse().slice(0, 8).map((j) => `<tr><td>${esc(j.corto)}</td><td>${esc(j.titulo)}${j.abierto ? ' <span class="est abierto">abierta</span>' : ""}</td><td class="num">${j.total}</td><td class="num"><b>${j.pct}%</b></td></tr>`).join("")
+    }</table>` : '<p class="vacio">Todavía no hay juntas. Se crean en la pestaña Juntas de Eventos.</p>'}
+    <p class="det" style="margin-top:8px"><a href="/juntas${q}" style="color:#2E4BC6;font-weight:600">Pasar lista en una junta →</a></p></div>
 </div>
 
 <h2 id="productos">🛍️ Catálogo de la tienda <small>${d.productos.length} productos · ${d.productos.filter((p) => p.disponible !== false).length} visibles</small></h2>
@@ -416,6 +441,11 @@ if (typeof Chart === 'undefined') {
         { label: 'Staff', data: D.asistenciaEventos.map((e) => e.staff), backgroundColor: '#C9CCE0', borderRadius: 6 } ] },
     options: { ...base, scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } },
       plugins: { ...leyenda('bottom'), tooltip: { callbacks: { title: (t) => D.asistenciaEventos[t[0].dataIndex].titulo, label: (t) => t.dataset.label + ': ' + t.raw } } } } });
+  if ((c = sinDatos('c-juntas', !D.juntas.length))) new Chart(c, { type: 'bar',
+    data: { labels: D.juntas.map((j) => [j.corto, j.titulo.slice(0, 22)]), datasets: [
+      { label: '% del staff', data: D.juntas.map((j) => j.pct), backgroundColor: '#1C2260', borderRadius: 6, yAxisID: 'y' } ] },
+    options: { ...base, scales: { x: { grid: { display: false } }, y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + '%' } } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { title: (t) => D.juntas[t[0].dataIndex].titulo, label: (t) => D.juntas[t.dataIndex].total + ' asistentes · ' + t.raw + '% del staff' } } } } });
   if ((c = sinDatos('c-tipos', !D.porTipo.some((t) => t.y)))) new Chart(c, { type: 'doughnut',
     data: { labels: D.porTipo.map((t) => t.label), datasets: [{ data: D.porTipo.map((t) => t.y), backgroundColor: D.porTipo.map((t) => t.color), borderWidth: 2, borderColor: '#fff' }] },
     options: { ...base, cutout: '58%', plugins: leyenda('bottom') } });
