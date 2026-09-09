@@ -6,6 +6,8 @@ import { TIPOS, TIPOS_FIJOS, fechaBonita, esStaff, esJunta, nombreTipo, claveTip
          type Evento, type Asistencia, type Preregistro, type TipoId } from "./eventos";
 import type { Product } from "./products";
 import { NAV_CSS, navAdmin, LINKTREE, INSTAGRAM, WHATSAPP_GRUPO } from "./ui";
+import { resumenTareas } from "./tareas";
+import { estadoEspejo, notionActivo } from "./notion";
 
 export interface DatosPanel {
   movs: Mov[];
@@ -312,6 +314,8 @@ const tarjetaProducto = (p: Product | null, q: string): string => {
 
 export function renderPanel(d: DatosPanel): string {
   const r = calcular(d);
+  const tar = resumenTareas();
+  const espejo = estadoEspejo();
   const q = `?clave=${encodeURIComponent(d.clave)}`;
   const clase = (m: Mov) => (["efectivo", "revolut", "spei", "stripe"].includes(m.metodo) ? m.metodo : "otro");
   const conteo = new Map<string, number>();
@@ -403,6 +407,24 @@ ${r.preAbiertos.length ? `<div class="accesos">${r.preAbiertos.map((e) =>
     }</table>` : '<p class="vacio">Todavía no hay juntas. Se crean en la pestaña Juntas de Eventos.</p>'}
     <p class="det" style="margin-top:8px"><a href="/juntas${q}" style="color:#2E4BC6;font-weight:600">Pasar lista en una junta →</a></p></div>
 </div>
+
+<h2>✅ Tareas del equipo <small>${tar.abiertas} abiertas · ${tar.atrasadas} atrasadas · ${tar.conCuenta} de ${tar.staff} cuentas activadas</small></h2>
+<div class="grid2">
+  <div class="graf"><h3>Cumplimiento por área</h3>
+    ${tar.porArea.length ? `<table><tr><th>Área</th><th class="num">Hechas</th><th class="num">Total</th><th class="num">%</th></tr>${
+      tar.porArea.map((a) => `<tr><td><span class="tipo" style="background:${a.color};color:#fff">${esc(a.label)}</span></td><td class="num">${a.hechas}</td><td class="num">${a.total}</td><td class="num"><b>${a.pct}%</b></td></tr>`).join("")
+    }</table>` : '<p class="vacio">Todavía no hay tareas. Se crean en el portal.</p>'}
+    <p class="det" style="margin-top:8px"><a href="/tareas" style="color:#2E4BC6;font-weight:600">Abrir el tablero de tareas →</a></p></div>
+  <div class="graf"><h3>Cumplimiento por persona</h3>
+    ${tar.porPersona.length ? `<table><tr><th>Persona</th><th>Rol</th><th class="num">Hechas</th><th class="num">%</th></tr>${
+      tar.porPersona.slice(0, 12).map((p) => `<tr><td>${esc(p.apodo)}<div class="det">${esc(p.nombre)}</div></td><td>${esc(p.rol)}</td><td class="num">${p.hechas}/${p.total}</td><td class="num"><b>${p.pct}%</b></td></tr>`).join("")
+    }</table>` : '<p class="vacio">Sin tareas asignadas todavía.</p>'}
+    <p class="det" style="margin-top:8px"><a href="/tareas/semana" style="color:#2E4BC6;font-weight:600">Ver la lámina de la semana →</a></p></div>
+</div>
+${notionActivo() ? `<form method="post" action="/admin/notion/espejo${q}" style="margin-top:10px">
+  <button class="btn sec" type="submit">🔄 Actualizar el espejo en Notion</button>
+  <span class="det" style="margin-left:10px">${espejo.ultimo ? "Última vez: " + esc(new Date(espejo.ultimo).toLocaleString("es-MX")) : "Todavía no se ha creado"}</span>
+</form>` : ""}
 
 <h2 id="productos">🛍️ Catálogo de la tienda <small>${d.productos.length} productos · ${d.productos.filter((p) => p.disponible !== false).length} visibles</small></h2>
 <p class="nota">Lo que guardes aquí se refleja al instante en la tienda, en el cobro con tarjeta y en los botones rápidos de Cuentas.${d.editado ? "" : " Ahora mismo se usa el catálogo original del repositorio."}</p>

@@ -15,7 +15,7 @@ export function navAdmin(clave: string, actual: "panel" | "cuentas" | "eventos")
   ];
   return `<nav class="nav-admin">${enlaces.map(([k, href, txt]) =>
     `<a href="${href}${q}"${k === actual ? ' class="actual"' : ""}>${txt}</a>`).join("")
-  }<a href="/" target="_blank" rel="noopener">🛍️ Tienda ↗</a><a href="${LINKTREE}" target="_blank" rel="noopener">🔗 Linktree ↗</a></nav>`;
+  }<a href="/portal">🙋 Portal</a><a href="/" target="_blank" rel="noopener">🛍️ Tienda ↗</a><a href="${LINKTREE}" target="_blank" rel="noopener">🔗 Linktree ↗</a></nav>`;
 }
 
 // pestañas de la sección Eventos: Eventos · Galería · Juntas (van al final del <header>)

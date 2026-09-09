@@ -109,6 +109,29 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   juntas (`TIPOS_EVENTO`); las acciones llevan `&volver=juntas` para regresar a /juntas.
   `/eventos.csv?solo=juntas`. El Panel tiene bloque «Juntas de staff» (% del staff conocido).
 
+## Portal de tareas (staff con PIN)
+- **El repositorio es PÚBLICO**: ningún dato personal (nombres completos, correos,
+  teléfonos, PIN) puede ir a git. Todo eso vive solo en el volumen: `staff.json`,
+  `areas.json`, `tareas.json`, `semanas.json`, `notion.json` y `tareas/` (evidencias).
+- `api/src/staff.ts`: personas, áreas y acceso. PIN de 4 dígitos con scrypt y sal por
+  persona; sesión en cookie firmada con HMAC de `CUENTAS_CLAVE` (30 días, HttpOnly,
+  Secure solo si la petición viene por https). Roles: presidencia, vicepresidencia,
+  dirección, coordinación; `admin: true` da permiso total sin cambiar el área (lo usa
+  quien mantiene la página). Áreas base: presidencia, proyectos, finanzas, comunicacion, respo.
+- `api/src/tareas.ts`: modelo (área, asignados, vigencia fechas|transversal|evento,
+  estado pendiente|curso|hecha|vencida, evidencia) y semanas. `api/src/portal.ts`: pantallas.
+- Rutas: `/portal` (entrar y mis tareas), `/tareas` (tablero, solo quien asigna),
+  `/tareas/semana` (lámina en canvas, PNG descargable), `/tareas/cerrar-semana`
+  (arrastrar o vencer), `/tareas/equipo` (presidencia: PIN y directores).
+- Notion (`api/src/notion.ts`, token en `NOTION_TOKEN`): `POST /admin/notion/importar`
+  con `modo=aplicar` trae Directorio, tareas abiertas y agenda futura del semestre
+  AD 2026; sin `modo=aplicar` es un ENSAYO que no escribe nada. El espejo vive en una
+  página propia ("Portal MIND (espejo)") creada bajo el semestre: NUNCA se escribe en
+  las bases del grupo. Los tokens personales de Notion no pueden listar usuarios, así
+  que los responsables se casan por nombre contra el Directorio.
+- Los ids de las bases de Notion están en `BASES_POR_DEFECTO` y se pueden sustituir
+  escribiendo `/data/notion.json` sin tocar código (útil al cambiar de semestre).
+
 ## Desarrollo
 ```
 npm install

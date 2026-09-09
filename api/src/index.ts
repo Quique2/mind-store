@@ -19,6 +19,15 @@ import { leerEventos, leerAsistencias, crearEvento, alternarEvento, buscarEvento
          quitarPrereg, alternarPrereg, renderPreregistro, renderResultadoPre, renderCSVPre,
          type TipoId } from "./eventos";
 import multer from "multer";
+import { leerStaff, guardarStaff, leerAreas, guardarAreas, buscarPersona, normMat, generarPin,
+         ponerPin, pinCorrecto, crearSesion, leerSesion, cookieSesion, cookieBorrar,
+         esPresidencia, dirigeArea, puedeAsignar, type Persona } from "./staff";
+import { leerTareas, crearTarea, conId, actualizar, borrarTarea, posponer, cerrarSemana,
+         esAbierta, enSemana, tocaA, semanaActual, lunesDe, DIR_EVIDENCIA, archivoSeguro,
+         nuevoId as nuevoIdTarea, type Tarea, type EstadoTarea } from "./tareas";
+import { renderEntrar, renderElegirPin, renderYo, renderTablero, renderLamina,
+         renderCerrarSemana, renderEquipo } from "./portal";
+import { notionActivo, espejar, espejarPronto, importarDeNotion, EXT_EVIDENCIA } from "./notion";
 import { leerGaleria, agregarItem, borrarItem, infoEnlace, nuevoId, nombreSeguro, renderGaleria,
          DIR_GALERIA, EXT, LIMITE_MB } from "./galeria";
 
@@ -561,6 +570,350 @@ app.get("/asistencia/:id/qr", async (req, res) => {
   const svg = await QRCode.toString(url, { type: "svg", errorCorrectionLevel: "Q", margin: 1,
                                            color: { dark: "#1C2260", light: "#ffffff" } });
   res.type("html").send(renderQR(ev, svg, url));
+});
+
+// ---------------- Portal de tareas: cuentas con PIN, tablero y lámina ----------------
+const urlencoded = express.urlencoded({ extended: false });
+/** ¿La petición viene por https? En Railway lo dice el proxy. */
+const conTLS = (req: express.Request) =>
+  (req.headers["x-forwarded-proto"] ?? req.protocol) === "https";
+/** Persona de la sesión, o null. */
+function sesion(req: express.Request): Persona | null {
+  const mat = leerSesion(req.headers.cookie);
+  if (!mat) return null;
+  const p = buscarPersona(mat);
+  return p && p.activo ? p : null;
+}
+function exigeSesion(req: express.Request, res: express.Response): Persona | null {
+  const p = sesion(req);
+  if (!p) { res.redirect("/portal"); return null; }
+  if (p.provisional) { res.type("html").send(renderElegirPin(p)); return null; }
+  return p;
+}
+const volverPortal = (destino: string, aviso: string) =>
+  `${destino}${destino.includes("?") ? "&" : "?"}ok=${encodeURIComponent(aviso)}`;
+const avisoDe = (req: express.Request) =>
+  req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
+/** Eventos (no juntas) para amarrar tareas, del más reciente al más viejo. */
+const eventosLite = () => leerEventos()
+  .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
+  .map((e) => ({ id: e.id, titulo: e.titulo, fecha: e.fecha }));
+
+app.get("/portal", (req, res) => {
+  const p = sesion(req);
+  if (!p) return res.type("html").send(renderEntrar());
+  if (p.provisional) return res.type("html").send(renderElegirPin(p));
+  res.type("html").send(renderYo(p, leerTareas(), leerAreas(), leerStaff(), eventosLite(), avisoDe(req)));
+});
+
+app.post("/portal/entrar", urlencoded, (req, res) => {
+  const b = req.body as { matricula?: string; pin?: string };
+  const mat = normMat(String(b.matricula ?? ""));
+  const pin = String(b.pin ?? "");
+  const lista = leerStaff();
+  const p = lista.find((x) => x.matricula === mat);
+  if (!p || !p.activo || !p.pinHash) {
+    return res.status(401).type("html").send(renderEntrar("No encontramos esa matrícula o todavía no tiene PIN. Pídeselo a Alexa.", mat));
+  }
+  if (!pinCorrecto(p, pin)) {
+    return res.status(401).type("html").send(renderEntrar("PIN incorrecto. Inténtalo otra vez.", mat));
+  }
+  p.ultimoAcceso = new Date().toISOString();
+  guardarStaff(lista);
+  res.setHeader("Set-Cookie", cookieSesion(crearSesion(p.matricula), conTLS(req)));
+  res.redirect("/portal");
+});
+
+app.get("/portal/salir", (req, res) => {
+  res.setHeader("Set-Cookie", cookieBorrar(conTLS(req)));
+  res.redirect("/portal");
+});
+
+// primera vez: cambiar el PIN provisional por uno propio
+app.post("/portal/pin", urlencoded, (req, res) => {
+  const p = sesion(req);
+  if (!p) return res.redirect("/portal");
+  const b = req.body as { pin?: string; pin2?: string };
+  const pin = String(b.pin ?? "");
+  if (!/^\d{4}$/.test(pin)) return res.type("html").send(renderElegirPin(p, "El PIN debe ser de cuatro dígitos."));
+  if (pin !== String(b.pin2 ?? "")) return res.type("html").send(renderElegirPin(p, "Los dos PIN no coinciden."));
+  const lista = leerStaff();
+  const yo = lista.find((x) => x.matricula === p.matricula)!;
+  ponerPin(yo, pin, false);
+  guardarStaff(lista);
+  res.redirect(volverPortal("/portal", "✓ Listo, tu PIN quedó guardado"));
+});
+
+app.post("/portal/pin-cambiar", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const b = req.body as { actual?: string; pin?: string };
+  if (!pinCorrecto(p, String(b.actual ?? ""))) {
+    return res.redirect(volverPortal("/portal", "Tu PIN actual no coincide, no se cambió nada."));
+  }
+  const pin = String(b.pin ?? "");
+  if (!/^\d{4}$/.test(pin)) return res.redirect(volverPortal("/portal", "El PIN nuevo debe ser de cuatro dígitos."));
+  const lista = leerStaff();
+  const yo = lista.find((x) => x.matricula === p.matricula)!;
+  ponerPin(yo, pin, false);
+  guardarStaff(lista);
+  res.redirect(volverPortal("/portal", "✓ Tu PIN quedó actualizado"));
+});
+
+// ---- tablero ----
+app.get("/tareas", (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const areas = leerAreas();
+  if (!puedeAsignar(p, areas)) return res.redirect("/portal");
+  const area = String(req.query.area ?? "");
+  res.type("html").send(renderTablero(p, leerTareas(), areas, leerStaff(), eventosLite(), avisoDe(req), area));
+});
+
+const listaDe = (v: unknown): string[] =>
+  v === undefined ? [] : Array.isArray(v) ? v.map(String) : [String(v)];
+
+const TareaSchema = z.object({
+  titulo: z.string().trim().min(3).max(120),
+  detalle: z.string().trim().max(300).optional().default(""),
+  area: z.string().max(40),
+  vigencia: z.enum(["fechas", "transversal", "evento"]).optional().default("fechas"),
+  inicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal("")).default(""),
+  fin: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal("")).default(""),
+  evento: z.string().max(12).optional().default(""),
+});
+function vigenciaDe(d: z.infer<typeof TareaSchema>): Tarea["vigencia"] {
+  if (d.vigencia === "transversal") return { tipo: "transversal" };
+  if (d.vigencia === "evento") return { tipo: "evento", evento: d.evento || undefined };
+  return { tipo: "fechas", inicio: d.inicio || undefined, fin: d.fin || undefined };
+}
+
+app.post("/tareas/nueva", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const areas = leerAreas();
+  const parsed = TareaSchema.safeParse(req.body);
+  if (!parsed.success) return res.redirect(volverPortal("/tareas", "Revisa el título y el área."));
+  const d = parsed.data;
+  if (!dirigeArea(p, d.area, areas)) return res.redirect(volverPortal("/tareas", "No puedes crear tareas en esa área."));
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; la tarea no se guardó.");
+  const staff = leerStaff();
+  const asignados = listaDe((req.body as Record<string, unknown>).asignados)
+    .map((m) => normMat(m)).filter((m) => staff.some((s) => s.matricula === m));
+  const t = crearTarea({ titulo: d.titulo, detalle: d.detalle, area: d.area, asignados,
+                         vigencia: vigenciaDe(d), creadaPor: p.matricula });
+  espejarPronto();
+  res.redirect(volverPortal("/tareas", `✓ Creada: ${t.titulo}`));
+});
+
+app.post("/tareas/editar", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const b = req.body as { id?: string; volver?: string };
+  const areas = leerAreas();
+  const parsed = TareaSchema.safeParse(req.body);
+  const actual = conId(String(b.id ?? ""));
+  const destino = String(b.volver ?? "/tareas");
+  if (!parsed.success || !actual) return res.redirect(volverPortal(destino, "No se pudo guardar el cambio."));
+  if (!dirigeArea(p, actual.area, areas) || !dirigeArea(p, parsed.data.area, areas)) {
+    return res.redirect(volverPortal(destino, "No puedes mover tareas a esa área."));
+  }
+  const staff = leerStaff();
+  const asignados = listaDe((req.body as Record<string, unknown>).asignados)
+    .map((m) => normMat(m)).filter((m) => staff.some((s) => s.matricula === m));
+  const d = parsed.data;
+  actualizar(actual.id, (t) => {
+    t.titulo = d.titulo; t.detalle = d.detalle; t.area = d.area;
+    t.vigencia = vigenciaDe(d); t.asignados = asignados;
+  });
+  espejarPronto();
+  res.redirect(volverPortal(destino, `✓ Guardada: ${d.titulo}`));
+});
+
+app.post("/tareas/estado", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const b = req.body as { id?: string; estado?: string; volver?: string };
+  const destino = String(b.volver ?? "/portal");
+  const t = conId(String(b.id ?? ""));
+  const nuevo = String(b.estado ?? "");
+  if (!t || !["pendiente", "curso", "hecha", "vencida"].includes(nuevo)) {
+    return res.redirect(volverPortal(destino, "No se encontró esa tarea."));
+  }
+  const areas = leerAreas();
+  const puede = tocaA(t, p.matricula) || dirigeArea(p, t.area, areas);
+  if (!puede) return res.redirect(volverPortal(destino, "Esa tarea no es tuya."));
+  if (nuevo === "vencida" && !dirigeArea(p, t.area, areas)) {
+    return res.redirect(volverPortal(destino, "Solo quien dirige el área puede dar por vencida una tarea."));
+  }
+  actualizar(t.id, (x) => {
+    x.estado = nuevo as EstadoTarea;
+    if (nuevo === "hecha") { x.hechaEl = new Date().toISOString(); x.hechaPor = p.matricula; }
+    else { x.hechaEl = undefined; x.hechaPor = undefined; }
+    if (nuevo === "vencida") x.cerradaEn = semanaActual();
+    if (nuevo === "pendiente" || nuevo === "curso") x.cerradaEn = undefined;
+  });
+  espejarPronto();
+  const dicho = nuevo === "hecha" ? "✓ ¡Hecha!" : nuevo === "vencida" ? "Marcada como vencida" : "Actualizada";
+  res.redirect(volverPortal(destino, `${dicho}: ${t.titulo}`));
+});
+
+app.post("/tareas/posponer", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const b = req.body as { id?: string; volver?: string };
+  const destino = String(b.volver ?? "/portal");
+  const t = conId(String(b.id ?? ""));
+  if (!t || (!tocaA(t, p.matricula) && !dirigeArea(p, t.area, leerAreas()))) {
+    return res.redirect(volverPortal(destino, "No se encontró esa tarea."));
+  }
+  actualizar(t.id, posponer);
+  espejarPronto();
+  res.redirect(volverPortal(destino, `→ ${t.titulo} se movió a la próxima semana`));
+});
+
+app.post("/tareas/borrar", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const b = req.body as { id?: string; volver?: string };
+  const destino = String(b.volver ?? "/tareas");
+  const t = conId(String(b.id ?? ""));
+  if (!t || !dirigeArea(p, t.area, leerAreas())) {
+    return res.redirect(volverPortal(destino, "No puedes borrar esa tarea."));
+  }
+  borrarTarea(t.id);
+  espejarPronto();
+  res.redirect(volverPortal(destino, `Borrada: ${t.titulo}`));
+});
+
+// evidencia: archivo al disco o enlace
+const subidaTarea = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => { fs.mkdirSync(DIR_EVIDENCIA, { recursive: true }); cb(null, DIR_EVIDENCIA); },
+    filename: (_req, file, cb) => cb(null, `${nuevoIdTarea()}.${EXT_EVIDENCIA[file.mimetype] ?? "bin"}`),
+  }),
+  limits: { fileSize: 25 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => {
+    if (EXT_EVIDENCIA[file.mimetype]) cb(null, true);
+    else cb(new Error("tipo no permitido: " + file.mimetype));
+  },
+});
+app.post("/tareas/evidencia",
+  (req, res, next) => subidaTarea.single("archivo")(req, res, (err: unknown) => {
+    if (err) return res.status(400).send(err instanceof Error ? err.message : "no se pudo subir");
+    next();
+  }),
+  (req, res) => {
+    const p = exigeSesion(req, res);
+    if (!p) return;
+    const b = req.body as { id?: string; volver?: string; url?: string; nombre?: string };
+    const destino = String(b.volver ?? "/portal");
+    const t = conId(String(b.id ?? ""));
+    if (!t || (!tocaA(t, p.matricula) && !dirigeArea(p, t.area, leerAreas()))) {
+      return res.redirect(volverPortal(destino, "No se encontró esa tarea."));
+    }
+    const archivo = req.file;
+    const url = String(b.url ?? "").trim();
+    const nombre = String(b.nombre ?? "").trim().slice(0, 60);
+    if (!archivo && !/^https?:\/\//i.test(url)) {
+      return res.redirect(volverPortal(destino, "Sube un archivo o pega un enlace que empiece con http."));
+    }
+    actualizar(t.id, (x) => {
+      x.evidencia.push(archivo
+        ? { tipo: "archivo", nombre: nombre || archivo.originalname.slice(0, 60), archivo: archivo.filename,
+            por: p.matricula, ts: new Date().toISOString() }
+        : { tipo: "enlace", nombre: nombre || "Enlace", url, por: p.matricula, ts: new Date().toISOString() });
+    });
+    espejarPronto();
+    res.redirect(volverPortal(destino, `📎 Evidencia agregada a ${t.titulo}`));
+  });
+
+app.use("/tareas/evidencia", (req, res, next) => {
+  if (!sesion(req)) return res.status(401).send("Entra al portal para ver la evidencia.");
+  if (!archivoSeguro(req.path.slice(1))) return res.status(404).end();
+  next();
+}, express.static(DIR_EVIDENCIA, { maxAge: "7d", index: false }));
+
+// ---- lámina y cierre de semana ----
+app.get("/tareas/semana", (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const areas = leerAreas();
+  if (!puedeAsignar(p, areas)) return res.redirect("/portal");
+  const q = String(req.query.lunes ?? "");
+  const lunes = /^\d{4}-\d{2}-\d{2}$/.test(q) ? lunesDe(q) : semanaActual();
+  res.type("html").send(renderLamina(p, leerTareas(), areas, leerStaff(), lunes));
+});
+
+app.get("/tareas/cerrar-semana", (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  if (!esPresidencia(p)) return res.redirect("/tareas");
+  res.type("html").send(renderCerrarSemana(p, leerTareas(), leerAreas(), leerStaff()));
+});
+app.post("/tareas/cerrar-semana", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  if (!esPresidencia(p)) return res.redirect("/tareas");
+  const arrastrar = listaDe((req.body as Record<string, unknown>).arrastrar);
+  const abiertas = leerTareas().filter(esAbierta).filter((t) => enSemana(t, semanaActual()));
+  const vencer = abiertas.map((t) => t.id).filter((id) => !arrastrar.includes(id));
+  const s = cerrarSemana(arrastrar, vencer, p.matricula);
+  espejarPronto(5);
+  res.redirect(volverPortal("/tareas", `✓ Semana cerrada: ${s.arrastradas} se pasaron, ${s.vencidas} quedaron vencidas, ${s.hechas} se completaron`));
+});
+
+// ---- equipo (presidencia) ----
+app.get("/tareas/equipo", (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  if (!esPresidencia(p)) return res.redirect("/portal");
+  res.type("html").send(renderEquipo(p, leerStaff(), leerAreas(), avisoDe(req)));
+});
+app.post("/tareas/equipo/pin", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  if (!esPresidencia(p)) return res.redirect("/portal");
+  const lista = leerStaff();
+  const quien = lista.find((x) => x.matricula === normMat(String((req.body as { matricula?: string }).matricula ?? "")));
+  if (!quien) return res.redirect(volverPortal("/tareas/equipo", "No se encontró a esa persona."));
+  const pin = generarPin();
+  ponerPin(quien, pin, true);
+  guardarStaff(lista);
+  res.redirect(volverPortal("/tareas/equipo", `PIN nuevo de ${quien.nombre}: ${pin} — cópialo ahora, no se vuelve a mostrar`));
+});
+app.post("/tareas/equipo/director", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  if (!esPresidencia(p)) return res.redirect("/portal");
+  const b = req.body as { area?: string; matricula?: string };
+  const areas = leerAreas();
+  const a = areas.find((x) => x.id === String(b.area ?? ""));
+  if (!a) return res.redirect(volverPortal("/tareas/equipo", "No se encontró esa área."));
+  const mat = normMat(String(b.matricula ?? ""));
+  a.director = mat || undefined;
+  guardarAreas(areas);
+  const quien = leerStaff().find((x) => x.matricula === mat);
+  res.redirect(volverPortal("/tareas/equipo", quien ? `✓ ${quien.nombre} dirige ${a.nombre}` : `✓ ${a.nombre} quedó sin director`));
+});
+
+// ---- importación desde Notion y espejo (con la clave del panel) ----
+app.post("/admin/notion/importar", urlencoded, async (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!notionActivo()) return res.status(503).send("Falta configurar NOTION_TOKEN.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente.");
+  const soloVer = String((req.body as { modo?: string }).modo ?? "") !== "aplicar";
+  try {
+    const resumen = await importarDeNotion(soloVer);
+    res.type("text/plain; charset=utf-8").send(resumen);
+  } catch (e) {
+    res.status(502).type("text/plain; charset=utf-8").send("Error: " + (e instanceof Error ? e.message : String(e)));
+  }
+});
+app.post("/admin/notion/espejo", urlencoded, async (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const r = await espejar();
+  res.redirect(volverAdmin(req, r.mensaje));
 });
 
 // build web de Expo (app/dist) en producción
