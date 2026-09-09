@@ -15,7 +15,9 @@ import QRCode from "qrcode";
 import { leerEventos, leerAsistencias, crearEvento, alternarEvento, buscarEvento, registrar,
          normMatricula, esTipo, renderAdmin, renderFormulario, renderResultado, renderQR,
          renderCSV as renderAsistenciaCSV, borrarEvento, renderConfirmarBorrado, esStaff,
-         quitarAsistencia, cambiarStaff, listaPersonas, esJunta, type TipoId } from "./eventos";
+         quitarAsistencia, cambiarStaff, listaPersonas, esJunta, leerPreregistros, preregistrar,
+         quitarPrereg, alternarPrereg, renderPreregistro, renderResultadoPre, renderCSVPre,
+         type TipoId } from "./eventos";
 import multer from "multer";
 import { leerGaleria, agregarItem, borrarItem, infoEnlace, nuevoId, nombreSeguro, renderGaleria,
          DIR_GALERIA, EXT, LIMITE_MB } from "./galeria";
@@ -193,7 +195,7 @@ app.get("/admin", async (req, res) => {
   const st = await movsStripe(stripe);
   res.type("html").send(renderPanel({
     movs: [...leerCSV(), ...st.movs], stripeOk: st.ok,
-    eventos: leerEventos(), asistencias: leerAsistencias(),
+    eventos: leerEventos(), asistencias: leerAsistencias(), preregistros: leerPreregistros(),
     productos: catalogo(), editado: hayCatalogoEditado(),
     clave: String(req.query.clave),
     aviso: req.query.ok ? String(req.query.ok).slice(0, 200) : undefined,
@@ -247,14 +249,14 @@ const idOk = (id: string) => /^[a-z0-9_-]{4,12}$/i.test(id);
 app.get("/eventos", (req, res) => {
   if (!claveOk(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
   const ok = req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
-  res.type("html").send(renderAdmin(leerEventos(), leerAsistencias(), String(req.query.clave),
-                                    urlBase(req), ok, "eventos"));
+  res.type("html").send(renderAdmin(leerEventos(), leerAsistencias(), leerPreregistros(),
+                                    String(req.query.clave), urlBase(req), ok, "eventos"));
 });
 app.get("/juntas", (req, res) => {
   if (!claveOk(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
   const ok = req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
-  res.type("html").send(renderAdmin(leerEventos(), leerAsistencias(), String(req.query.clave),
-                                    urlBase(req), ok, "juntas"));
+  res.type("html").send(renderAdmin(leerEventos(), leerAsistencias(), leerPreregistros(),
+                                    String(req.query.clave), urlBase(req), ok, "juntas"));
 });
 
 app.get("/eventos.csv", (req, res) => {
@@ -348,17 +350,36 @@ const EventoSchema = z.object({
   tipo: z.string().refine(esTipo, "tipo desconocido"),
   titulo: z.string().max(80).optional().default(""),
   fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  tipoNombre: z.string().max(40).optional().default(""),
+  hora: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().or(z.literal("")).default(""),
+  lugar: z.string().max(80).optional().default(""),
+  nota: z.string().max(80).optional().default(""),
+  prereg: z.string().optional(),      // checkbox: "on" o ausente
 });
 app.post("/eventos/nuevo", express.urlencoded({ extended: false }), (req, res) => {
   if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
   const parsed = EventoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).send("Datos inválidos. Regresa y revisa el formulario.");
   if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; el evento no se guardó.");
-  const { evento: ev, repetido } = crearEvento(parsed.data.tipo as TipoId, parsed.data.titulo, parsed.data.fecha);
-  const enlace = `${urlBase(req)}/asistencia/${ev.id}`;
+  const d = parsed.data;
+  const { evento: ev, repetido } = crearEvento({
+    tipo: d.tipo as TipoId, titulo: d.titulo, fecha: d.fecha, tipoNombre: d.tipoNombre,
+    hora: d.hora, lugar: d.lugar, nota: d.nota, prereg: d.prereg === "on",
+  });
+  const enlace = `${urlBase(req)}/${ev.prereg ? "preregistro" : "asistencia"}/${ev.id}`;
   res.redirect(volverEventos(req, repetido
     ? `Ese evento ya se había creado hace un momento, no se duplicó: ${ev.titulo} → ${enlace}`
-    : `✓ Evento creado: ${ev.titulo} → ${enlace}`));
+    : `✓ ${esJunta(ev) ? "Junta creada" : "Evento creado"}: ${ev.titulo} → ${ev.prereg ? "prerregistro: " : ""}${enlace}`));
+});
+
+// abrir / cerrar el prerregistro de un evento
+app.post("/eventos/prereg", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const id = String((req.body as { id?: string }).id ?? "");
+  const ev = idOk(id) ? alternarPrereg(id) : null;
+  res.redirect(volverEventos(req, ev
+    ? (ev.prereg ? `✓ Prerregistro abierto: ${urlBase(req)}/preregistro/${ev.id}` : `✓ ${ev.titulo}: prerregistro cerrado`)
+    : "No se encontró ese evento."));
 });
 
 // borrar: primero la pantalla de confirmación (GET), luego el borrado real (POST con confirmar=si)
@@ -368,8 +389,9 @@ app.get("/eventos/borrar", (req, res) => {
   const ev = idOk(id) ? buscarEvento(id) : undefined;
   if (!ev) return res.redirect(volverEventos(req, "No se encontró ese evento."));
   const suyas = leerAsistencias().filter((a) => a.evento === id);
+  const suyosPre = leerPreregistros().filter((p) => p.evento === id);
   res.type("html").send(renderConfirmarBorrado(ev, suyas.length, suyas.filter(esStaff).length,
-                                               String(req.query.clave)));
+                                               suyosPre.length, String(req.query.clave)));
 });
 app.post("/eventos/borrar", express.urlencoded({ extended: false }), (req, res) => {
   if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
@@ -380,7 +402,7 @@ app.post("/eventos/borrar", express.urlencoded({ extended: false }), (req, res) 
   }
   const r = idOk(id) ? borrarEvento(id) : null;
   res.redirect(volverEventos(req, r
-    ? `✓ Borrado: ${r.evento.titulo} (${r.asistencias} registro${r.asistencias === 1 ? "" : "s"} de asistencia)`
+    ? `✓ Borrado: ${r.evento.titulo} (${r.asistencias} registro${r.asistencias === 1 ? "" : "s"} de asistencia${r.prereg ? ` y ${r.prereg} prerregistro${r.prereg === 1 ? "" : "s"}` : ""})`
     : "No se encontró ese evento."));
 });
 
@@ -426,12 +448,21 @@ app.post("/asistencia/manual", express.urlencoded({ extended: false }), (req, re
   const ev = parsed.success && idOk(parsed.data.evento) ? buscarEvento(parsed.data.evento) : undefined;
   if (!parsed.success || !ev) return res.redirect(volverEventos(req, "No se encontró ese evento."));
   const d = parsed.data;
-  const conocidas = new Map(listaPersonas(leerAsistencias()).map((p) => [p.matricula, p.nombre]));
+  // se aceptan las matrículas conocidas (staff e historial) y las prerregistradas a ESTE evento
+  const conocidas = new Map(listaPersonas(leerAsistencias())
+    .map((p) => [p.matricula, { nombre: p.nombre, staff: p.staff }]));
+  for (const p of leerPreregistros().filter((x) => x.evento === ev.id)) {
+    if (!conocidas.has(p.matricula)) conocidas.set(p.matricula, { nombre: p.nombre, staff: false });
+  }
   const lote: { nombre: string; matricula: string; staff: boolean }[] = [];
   const mats = d.matriculas === undefined ? [] : Array.isArray(d.matriculas) ? d.matriculas : [d.matriculas];
+  const vistas = new Set<string>();
   for (const m of mats) {
-    const nombre = conocidas.get(normMatricula(m));
-    if (nombre) lote.push({ nombre, matricula: m, staff: true });
+    const mat = normMatricula(m);
+    if (vistas.has(mat)) continue;       // una persona puede venir del staff y del prerregistro
+    vistas.add(mat);
+    const c = conocidas.get(mat);
+    if (c) lote.push({ nombre: c.nombre, matricula: mat, staff: c.staff });
   }
   if (d.nombre.length >= 3 && normMatricula(d.matricula).length >= 4) {
     lote.push({ nombre: d.nombre, matricula: d.matricula, staff: d.otroStaff === "on" });
@@ -444,6 +475,56 @@ app.post("/asistencia/manual", express.urlencoded({ extended: false }), (req, re
   }
   res.redirect(volverEventos(req, `✓ ${ok} asistencia${ok === 1 ? "" : "s"} registrada${ok === 1 ? "" : "s"} en ${ev.titulo}` +
     (dup ? ` · ${dup} ya estaba${dup === 1 ? "" : "n"}` : "")));
+});
+
+// ---------------- Prerregistro (apartar lugar antes del evento) ----------------
+// las acciones con clave van ANTES de /preregistro/:id para que no las tome por id
+app.post("/preregistro/quitar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  const b = req.body as { evento?: string; matricula?: string };
+  const evId = String(b.evento ?? "");
+  const r = idOk(evId) ? quitarPrereg(evId, String(b.matricula ?? "")) : null;
+  res.redirect(volverEventos(req, r
+    ? `✓ Se quitó el prerregistro de ${r.nombre}`
+    : "No se encontró ese prerregistro."));
+});
+app.get("/preregistros.csv", (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  res.type("text/csv").attachment("prerregistros-mind.csv")
+     .send(renderCSVPre(leerEventos(), leerPreregistros(), leerAsistencias()));
+});
+
+app.get("/preregistro/:id", (req, res) => {
+  const ev = idOk(req.params.id) ? buscarEvento(req.params.id) : undefined;
+  if (!ev) return res.status(404).send("Ese evento no existe.");
+  res.type("html").send(renderPreregistro(ev));
+});
+const PreSchema = z.object({
+  nombre: z.string().trim().min(3).max(80),
+  matricula: z.string().trim().min(4).max(14),
+  correo: z.string().trim().max(80).optional().default(""),
+  sitio: z.string().max(0).optional().default(""),   // honeypot: los bots lo llenan
+});
+app.post("/preregistro/:id", express.urlencoded({ extended: false }), (req, res) => {
+  const ev = idOk(req.params.id) ? buscarEvento(req.params.id) : undefined;
+  if (!ev) return res.status(404).send("Ese evento no existe.");
+  const parsed = PreSchema.safeParse(req.body);
+  if (!parsed.success || normMatricula(parsed.data.matricula).length < 4) {
+    return res.status(400).type("html")
+      .send(renderPreregistro(ev, "Revisa tu nombre y matrícula (p. ej. A01234567)."));
+  }
+  const r = preregistrar(ev.id, parsed.data.nombre, parsed.data.matricula, parsed.data.correo);
+  if (r === "no-existe") return res.status(404).send("Ese evento no existe.");
+  if (r === "cerrado") return res.type("html").send(renderPreregistro(ev));
+  res.type("html").send(renderResultadoPre(ev, r, parsed.data.nombre));
+});
+app.get("/preregistro/:id/qr", async (req, res) => {
+  const ev = idOk(req.params.id) ? buscarEvento(req.params.id) : undefined;
+  if (!ev) return res.status(404).send("Ese evento no existe.");
+  const url = `${urlBase(req)}/preregistro/${ev.id}`;
+  const svg = await QRCode.toString(url, { type: "svg", errorCorrectionLevel: "Q", margin: 1,
+                                           color: { dark: "#1C2260", light: "#ffffff" } });
+  res.type("html").send(renderQR(ev, svg, url, "prerregistro"));
 });
 
 // formulario público (sin clave): nombre + matrícula

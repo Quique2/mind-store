@@ -2,7 +2,8 @@
 // y edición del catálogo (precios, altas, bajas, ocultar). Los números se
 // calculan aquí en el servidor; Chart.js solo los pinta en el navegador.
 import { signo, EVENTO_INICIAL, type Mov } from "./cuentas";
-import { TIPOS, TIPOS_EVENTO, fechaBonita, esStaff, esJunta, type Evento, type Asistencia, type TipoId } from "./eventos";
+import { TIPOS, TIPOS_FIJOS, fechaBonita, esStaff, esJunta, nombreTipo, claveTipo,
+         type Evento, type Asistencia, type Preregistro, type TipoId } from "./eventos";
 import type { Product } from "./products";
 import { NAV_CSS, navAdmin, LINKTREE, INSTAGRAM, WHATSAPP_GRUPO } from "./ui";
 
@@ -11,6 +12,7 @@ export interface DatosPanel {
   stripeOk: boolean;
   eventos: Evento[];
   asistencias: Asistencia[];
+  preregistros: Preregistro[];
   productos: Product[];
   editado: boolean;      // ¿el catálogo viene del disco (editado) o del repo?
   clave: string;
@@ -166,16 +168,33 @@ export function calcular(d: DatosPanel) {
              total: lista.length, nuevos, recurrentes: lista.length - nuevos, color: TIPOS[e.tipo].color,
              staff: staff.filter((a) => a.evento === e.id).length };
   });
-  const porTipo = TIPOS_EVENTO.map((t) => ({
-    label: `${TIPOS[t].emoji} ${TIPOS[t].nombre}`, color: TIPOS[t].color,
-    y: asis.filter((a) => evIdx.get(a.evento)?.tipo === t).length,
-  }));
-  const personas = new Map<string, { nombre: string; mat: string; evs: Set<string>; tipos: Set<TipoId> }>();
+  // por tipo: los 4 fijos siempre, y cada "otro: X" como su propia categoría
+  const tipoMap = new Map<string, { label: string; color: string; y: number }>();
+  for (const t of TIPOS_FIJOS) {
+    tipoMap.set(t, { label: `${TIPOS[t].emoji} ${TIPOS[t].nombre}`, color: TIPOS[t].color, y: 0 });
+  }
+  for (const e of eventos) {
+    const k = claveTipo(e);
+    if (!tipoMap.has(k)) tipoMap.set(k, { label: `${TIPOS[e.tipo].emoji} ${nombreTipo(e)}`, color: TIPOS[e.tipo].color, y: 0 });
+  }
   for (const a of asis) {
-    const p = personas.get(a.matricula) ?? { nombre: a.nombre, mat: a.matricula, evs: new Set(), tipos: new Set() };
+    const e = evIdx.get(a.evento);
+    const o = e && tipoMap.get(claveTipo(e));
+    if (o) o.y++;
+  }
+  const porTipo = [...tipoMap.values()];
+  // prerregistros: cuántos apartaron lugar y cuántos de esos sí llegaron
+  const pre = d.preregistros.filter((p) => idsEv.has(p.evento));
+  const llegaron = new Set(asisEv.map((a) => a.evento + "|" + a.matricula));
+  const preVinieron = pre.filter((p) => llegaron.has(p.evento + "|" + p.matricula)).length;
+  const preAbiertos = eventos.filter((e) => e.prereg);
+  const personas = new Map<string, { nombre: string; mat: string; evs: Set<string>;
+                                     tipos: Map<string, { tipo: TipoId; nombre: string }> }>();
+  for (const a of asis) {
+    const p = personas.get(a.matricula) ?? { nombre: a.nombre, mat: a.matricula, evs: new Set(), tipos: new Map() };
     p.evs.add(a.evento);
     const e = evIdx.get(a.evento);
-    if (e) p.tipos.add(e.tipo);
+    if (e) p.tipos.set(claveTipo(e), { tipo: e.tipo, nombre: nombreTipo(e) });
     p.nombre = a.nombre;
     personas.set(a.matricula, p);
   }
@@ -190,6 +209,7 @@ export function calcular(d: DatosPanel) {
            nStaffPersonas: new Set(staff.map((a) => a.matricula)).size,
            nPersonas: personas.size, abiertos: eventos.filter((e) => e.abierto).length,
            nEventos: eventos.length, juntas, staffTotal,
+           nPre: pre.length, preVinieron, preAbiertos,
            asisJuntas: juntas.reduce((s, j) => s + j.total, 0),
            ultimos: [...ventas, ...gastos].sort((a, b) => (a.fecha < b.fecha ? 1 : -1)).slice(0, 8),
            evRecientes: [...evOrden].reverse().slice(0, 6) };
@@ -296,8 +316,8 @@ export function renderPanel(d: DatosPanel): string {
   const clase = (m: Mov) => (["efectivo", "revolut", "spei", "stripe"].includes(m.metodo) ? m.metodo : "otro");
   const conteo = new Map<string, number>();
   for (const a of d.asistencias) if (!esStaff(a)) conteo.set(a.evento, (conteo.get(a.evento) ?? 0) + 1);
-  const badge = (t: TipoId) =>
-    `<span class="tipo" style="background:${TIPOS[t].color};color:${TIPOS[t].tinta}">${TIPOS[t].emoji} ${TIPOS[t].nombre}</span>`;
+  const badge = (t: TipoId, nombre?: string) =>
+    `<span class="tipo" style="background:${TIPOS[t].color};color:${TIPOS[t].tinta}">${TIPOS[t].emoji} ${esc(nombre ?? TIPOS[t].nombre)}</span>`;
   const datosJS = {
     semanas: r.semanas, saldo: r.saldo, porEvento: r.porEvento, porProducto: r.porProducto, porGasto: r.porGasto,
     asistenciaEventos: r.asistenciaEventos, porTipo: r.porTipo, juntas: r.juntas,
@@ -321,7 +341,10 @@ ${d.stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mi
   <div class="kpi"><small>Asistencias</small><b>${r.nAsis}</b><span>${r.nEventos ? (r.nAsis / r.nEventos).toFixed(1) : "0"} por evento · sin staff</span></div>
   <div class="kpi"><small>Personas distintas</small><b>${r.nPersonas}</b><span>matrículas únicas</span></div>
   <div class="kpi"><small>Staff</small><b>${r.nStaff}</b><span>${r.nStaffPersonas} persona${r.nStaffPersonas === 1 ? "" : "s"} de staff</span></div>
+  <div class="kpi"><small>Prerregistros</small><b>${r.nPre}</b><span>${r.nPre ? `${r.preVinieron} llegaron (${Math.round(100 * r.preVinieron / r.nPre)}%)` : "nadie ha apartado lugar"}</span></div>
 </div>
+${r.preAbiertos.length ? `<div class="accesos">${r.preAbiertos.map((e) =>
+  `<a href="/preregistro/${esc(e.id)}" target="_blank" rel="noopener">✨ Prerregistro abierto: ${esc(e.titulo)} ↗</a>`).join("")}</div>` : ""}
 <div class="accesos">
   <a class="principal" href="${LINKTREE}" target="_blank" rel="noopener">🔗 Linktree de MIND ↗</a>
   <a href="/" target="_blank" rel="noopener">🛍️ Tienda ↗</a>
@@ -355,7 +378,7 @@ ${d.stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mi
   <div class="graf"><h3>Nuevos vs. recurrentes <small>¿la gente regresa?</small></h3><div class="lienzo"><canvas id="c-retencion"></canvas></div></div>
   <div class="graf"><h3>Quienes más asisten <small>sin staff</small></h3>
     ${r.top.length ? `<table class="rank"><tr><th>#</th><th>Persona</th><th class="num">Eventos</th><th>Tipos</th></tr>${
-      r.top.map((p, i) => `<tr><td>${i + 1}</td><td>${esc(p.nombre)}<div class="det">${esc(p.mat)}</div></td><td class="num">${p.evs.size}</td><td>${[...p.tipos].map(badge).join(" ")}</td></tr>`).join("")
+      r.top.map((p, i) => `<tr><td>${i + 1}</td><td>${esc(p.nombre)}<div class="det">${esc(p.mat)}</div></td><td class="num">${p.evs.size}</td><td>${[...p.tipos.values()].map((x) => badge(x.tipo, x.nombre)).join(" ")}</td></tr>`).join("")
     }</table>` : '<p class="vacio">Aún no hay asistencias registradas.</p>'}</div>
 </div>
 <div class="grid2">
@@ -366,7 +389,7 @@ ${d.stripeOk ? "" : '<div class="aviso">⚠ No se pudo consultar Stripe ahora mi
     <p class="det" style="margin-top:8px"><a href="/cuentas${q}" style="color:#2E4BC6;font-weight:600">Ver estado de cuenta completo y capturar →</a></p></div>
   <div class="graf"><h3>Eventos recientes</h3>
     ${r.evRecientes.length ? `<table><tr><th>Fecha</th><th>Evento</th><th class="num">Asist.</th><th>Estado</th></tr>${
-      r.evRecientes.map((e) => `<tr><td>${esc(fechaBonita(e.fecha))}</td><td>${badge(e.tipo)}<div style="margin-top:3px">${esc(e.titulo)}</div></td><td class="num">${conteo.get(e.id) ?? 0}</td><td><span class="est ${e.abierto ? "abierto" : "cerrado"}">${e.abierto ? "abierto" : "cerrado"}</span></td></tr>`).join("")
+      r.evRecientes.map((e) => `<tr><td>${esc(fechaBonita(e.fecha))}</td><td>${badge(e.tipo, nombreTipo(e))}<div style="margin-top:3px">${esc(e.titulo)}</div></td><td class="num">${conteo.get(e.id) ?? 0}</td><td><span class="est ${e.abierto ? "abierto" : "cerrado"}">${e.abierto ? "abierto" : "cerrado"}</span></td></tr>`).join("")
     }</table>` : '<p class="vacio">Todavía no hay eventos.</p>'}
     <p class="det" style="margin-top:8px"><a href="/eventos${q}" style="color:#2E4BC6;font-weight:600">Crear eventos y compartir enlaces →</a></p></div>
 </div>

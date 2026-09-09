@@ -68,6 +68,18 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   Esas tres rutas van ANTES de `/asistencia/:id` o el id se las come.
 - Las tablas dinámicas del panel usan <thead>/<tbody> explícitos: insertar <tr> en
   <table> crea un tbody por fila y las filas se duplican al filtrar (bug 2026-09-02).
+- **Prerregistro** (apartar lugar antes del evento): `Evento.prereg` + `/data/preregistros.json`.
+  Público `/preregistro/:id` (nombre, matrícula, correo opcional, honeypot) con fecha larga,
+  hora, lugar, nota y botón de Google Calendar; `/preregistro/:id/qr`. Admin: botón «Abrir/
+  Cerrar prerreg.» por evento (`POST /eventos/prereg`), tarjetas para compartir, lista con
+  «asistió» automático, `POST /preregistro/quitar`, `/preregistros.csv`. Las rutas con clave
+  van ANTES de `/preregistro/:id`. En «Registrar asistencia desde aquí» los prerregistrados
+  del evento salen como casillas (se aceptan sus matrículas aunque no estén en el historial).
+- **Tipo de evento «Otro»**: `TIPOS.otro` + `Evento.tipoNombre`. `nombreTipo(e)` da la etiqueta
+  visible y `claveTipo(e)` agrupa (`otro:<nombre>` es su propia categoría en filtros y gráficas).
+  `TIPOS_FIJOS` = los 4 de siempre; `TIPOS_EVENTO` = todos menos junta.
+- Eventos con campos opcionales `hora`, `lugar`, `nota` (se muestran en el formulario público,
+  el QR y la tarjeta de prerregistro).
 - Las rutas nuevas van SIEMPRE antes del `app.get("*")` del SPA.
 
 ## Panel ejecutivo y catálogo editable
