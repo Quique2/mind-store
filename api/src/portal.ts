@@ -199,7 +199,13 @@ function diasVisibles(t: Tarea, eventos: EventoLite[]): { ini: string; fin: stri
     const e = eventos.find((x) => x.id === v.evento);
     return e ? { ini: e.fecha, fin: e.fecha } : null;
   }
-  if (v.tipo !== "fechas" || (!v.inicio && !v.fin)) return null;
+  if (v.tipo !== "fechas") return null;
+  // ya hecha, deja de ocupar su rango: se queda solo en el día en que se cerró
+  if (t.estado === "hecha" && t.hechaEl) {
+    const d = new Date(t.hechaEl).toLocaleDateString("sv-SE");
+    return { ini: d, fin: d };
+  }
+  if (!v.inicio && !v.fin) return null;
   return { ini: v.inicio ?? v.fin!, fin: v.fin ?? v.inicio! };
 }
 

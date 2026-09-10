@@ -1520,7 +1520,7 @@ app.post("/api/notas/:id/a-tarea", (req, res) => {
   if (!hayDiscoPersistente()) return res.status(503).json({ error: "No hay disco persistente." });
   const { titulo, detalle } = comoTarea(n);
   const t = crearTarea({ titulo, detalle, area: parsed.data.area, asignados: [],
-                         vigencia: { tipo: "fechas", inicio: hoyISO(), fin: sumarDias(semanaActual(), 6) },
+                         vigencia: { tipo: "fechas", fin: sumarDias(semanaActual(), 6) },
                          creadaPor: p.matricula, origen: "nota" });
   actualizarNota(n.id, (x) => { x.usada = new Date().toISOString(); x.tareaId = t.id; });
   espejarPronto();
@@ -1536,9 +1536,9 @@ app.post("/api/tareas", (req, res) => {
   if (!areas.some((a) => a.id === parsed.data.area)) return res.status(400).json({ error: "Esa área no existe." });
   if (!dirigeArea(p, parsed.data.area, areas)) return res.status(403).json({ error: "No puedes crear tareas en esa área." });
   if (!hayDiscoPersistente()) return res.status(503).json({ error: "No hay disco persistente." });
-  // nace en la semana actual; la fecha exacta se afina después desde la tarjeta
+  // nace para esta semana (vence el domingo); el rango real, si lo tiene, se pone desde la tarjeta
   const t = crearTarea({ titulo: parsed.data.titulo, detalle: "", area: parsed.data.area, asignados: [],
-                         vigencia: { tipo: "fechas", inicio: hoyISO(), fin: sumarDias(semanaActual(), 6) },
+                         vigencia: { tipo: "fechas", fin: sumarDias(semanaActual(), 6) },
                          creadaPor: p.matricula });
   espejarPronto();
   res.json(tareaJSON(t));
