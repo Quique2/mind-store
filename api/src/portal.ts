@@ -485,21 +485,18 @@ ${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
 <div class="vistas"><a class="actual" href="/tareas">🗂️ Tablero</a><a href="/tareas/lista">📋 Lista</a>${puedeTodo ? `<a href="/tareas/cerrar-semana">🗓️ Cerrar la semana</a>` : ""}<label class="cambio"><input type="checkbox" id="ver-hechas"> ver hechas</label></div>
 <div class="pool" id="pool"></div>
 <p class="ayuda" id="ayuda">Arrastra una persona a una tarea para asignarla. En celular: toca la persona y luego la tarea. Toca de nuevo para soltar.</p>
-<div class="zona">
-  <div class="tablero" id="tablero"></div>
-  <aside class="notas" id="panel-notas">
-    <div class="notas-cab"><h3>📝 Notas</h3><button type="button" class="plegar" id="plegar-notas" title="Ocultar">–</button></div>
-    <div class="notas-cuerpo" id="notas-cuerpo">
-      <div class="notas-tabs" id="notas-tabs">
-        <button type="button" data-amb="general" class="actual">Del grupo</button>
-        <button type="button" data-amb="mia">M\u00edas</button>
-      </div>
-      <form id="f-nota"><input name="texto" placeholder="+ apunta un pendiente" maxlength="200" autocomplete="off"></form>
-      <div class="notas-lista" id="notas-lista"></div>
-      <p class="notas-pie" id="notas-pie">Arrastra una nota a una columna para volverla tarea.</p>
-    </div>
-  </aside>
-</div>
+<div class="tablero" id="tablero"></div>
+<button type="button" class="pastilla" id="pastilla-notas">📝 Notas</button>
+<aside class="cajon" id="panel-notas" aria-label="Notas">
+  <div class="notas-cab"><h3>📝 Notas</h3><button type="button" class="plegar" id="plegar-notas" title="Minimizar">–</button></div>
+  <div class="notas-tabs" id="notas-tabs">
+    <button type="button" data-amb="general" class="actual">Del grupo</button>
+    <button type="button" data-amb="mia">Mías</button>
+  </div>
+  <form id="f-nota"><input name="texto" placeholder="+ apunta un pendiente" maxlength="200" autocomplete="off"></form>
+  <div class="notas-lista" id="notas-lista"></div>
+  <p class="notas-pie" id="notas-pie">Arrastra una nota a una columna para volverla tarea.</p>
+</aside>
 <div id="hoja" class="hoja" hidden><div class="hoja-caja"><button class="cerrar" type="button" onclick="cerrarHoja()">✕</button><div id="hoja-cuerpo"></div></div></div>
 <div id="aviso-flotante" class="flotante" hidden></div>
 <script>
@@ -656,6 +653,7 @@ $('#ver-hechas').addEventListener('change', pinta);
 let ambNota = 'general';
 let notaSel = null;
 function pintaNotas() {
+  ponPastilla();
   const lista = S.notas.filter((n) => n.ambito === ambNota);
   document.querySelectorAll('#notas-tabs button').forEach((b) => b.classList.toggle('actual', b.dataset.amb === ambNota));
   $('#notas-lista').innerHTML = lista.length ? lista.map((n) => {
@@ -671,6 +669,7 @@ function pintaNotas() {
       const b = e.target.closest('[data-borrar]');
       if (b) { e.stopPropagation(); quitaNota(b.dataset.borrar); return; }
       notaSel = notaSel === id ? null : id;
+      cajon(notaSel ? 'lugar' : 'volver');
       pintaNotas(); pinta();
       $('#notas-pie').textContent = notaSel ? 'Ahora toca el \u00e1rea del tablero donde quieres esa tarea.' : 'Arrastra una nota a una columna para volverla tarea.';
     });
@@ -691,7 +690,7 @@ async function notaATarea(id, areaId) {
     const r = await api('POST', '/api/notas/' + id + '/a-tarea', { area: areaId });
     S.tareas.push(r.tarea);
     S.notas = S.notas.filter((x) => x.id !== id);
-    notaSel = null;
+    notaSel = null; cajon('volver');
     pinta(); pintaNotas();
     avisa('✓ Ya es tarea en ' + area(areaId).nombre);
   } catch (e) { avisa(e.message, true); }
@@ -704,10 +703,35 @@ $('#f-nota').addEventListener('submit', async (e) => {
   catch (err) { avisa(err.message, true); }
 });
 document.querySelectorAll('#notas-tabs button').forEach((b) => b.addEventListener('click', () => { ambNota = b.dataset.amb; notaSel = null; pintaNotas(); pinta(); }));
-$('#plegar-notas').addEventListener('click', () => {
-  const c = $('#notas-cuerpo'); c.hidden = !c.hidden;
-  $('#plegar-notas').textContent = c.hidden ? '+' : '\u2013';
+// ---- cajón flotante: minimizado es una pastilla; abierto flota encima del tablero sin moverlo ----
+const CAJON = $('#panel-notas'), PASTILLA = $('#pastilla-notas');
+let cajonAbierto = false;
+try { cajonAbierto = localStorage.getItem('mind-notas') === 'abierto'; } catch (e) {}
+function cajon(accion) {
+  if (accion === 'abrir' || accion === 'cerrar') {
+    cajonAbierto = accion === 'abrir';
+    try { localStorage.setItem('mind-notas', cajonAbierto ? 'abierto' : 'cerrado'); } catch (e) {}
+  }
+  CAJON.classList.toggle('abierto', cajonAbierto);
+  CAJON.classList.toggle('hace-lugar', accion === 'lugar');
+  ponPastilla();
+}
+function ponPastilla() {
+  const eligiendo = !!notaSel && CAJON.classList.contains('hace-lugar');
+  PASTILLA.textContent = eligiendo ? '✕ Cancelar · toca un área' : '📝 Notas' + (S.notas.length ? ' · ' + S.notas.length : '');
+  PASTILLA.classList.toggle('eligiendo', eligiendo);
+  PASTILLA.hidden = cajonAbierto && !CAJON.classList.contains('hace-lugar');
+}
+PASTILLA.addEventListener('click', () => {
+  if (notaSel) { notaSel = null; pintaNotas(); pinta(); $('#notas-pie').textContent = 'Arrastra una nota a una columna para volverla tarea.'; }
+  cajon('abrir');
 });
+$('#plegar-notas').addEventListener('click', () => cajon('cerrar'));
+// al arrastrar lo que sea (persona, tarjeta o nota) el cajón se hace a un lado para soltar en cualquier columna
+document.addEventListener('dragstart', () => { setTimeout(() => cajon('lugar'), 0); });
+document.addEventListener('dragend', () => { if (!notaSel) cajon('volver'); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && notaSel) { notaSel = null; pintaNotas(); pinta(); cajon('volver'); } });
+cajon('volver');
 pintaPool(); pinta(); pintaNotas();
 </script>`;
   return paginaPortal("Tablero · MIND",
@@ -716,9 +740,14 @@ pintaPool(); pinta(); pintaNotas();
 }
 export const CSS_KANBAN = `
 main { max-width:1400px; }
-.zona { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:14px; align-items:start; }
-@media (max-width:1050px) { .zona { grid-template-columns:minmax(0,1fr); } }
-.notas { background:#fff; border:1px solid #E4E1D2; border-radius:14px; padding:12px 13px; position:sticky; top:74px; }
+.cajon { position:fixed; top:90px; right:16px; bottom:16px; width:320px; max-width:calc(100vw - 32px); z-index:30; background:#fff; border:1px solid #E4E1D2; border-radius:16px; padding:12px 13px; box-shadow:0 18px 40px rgba(16,22,66,.22); display:flex; flex-direction:column; transform:translateX(calc(100% + 40px)); opacity:0; pointer-events:none; transition:transform .22s ease, opacity .18s ease; }
+.cajon.abierto { transform:none; opacity:1; pointer-events:auto; }
+.cajon.abierto.hace-lugar { transform:translateX(calc(100% + 40px)); opacity:0; pointer-events:none; }
+.cajon .notas-lista { flex:1; min-height:0; max-height:none; }
+.pastilla { position:fixed; right:18px; bottom:18px; z-index:31; font:inherit; font-size:13.5px; font-weight:800; color:#fff; background:#1C2260; border:0; border-radius:999px; padding:11px 18px; box-shadow:0 10px 24px rgba(16,22,66,.28); cursor:pointer; }
+.pastilla:hover { background:#2E4BC6; }
+.pastilla.eligiendo { background:#F5C518; color:#1C2260; }
+@media (max-width:700px) { .cajon { top:auto; left:0; right:0; bottom:0; width:auto; max-width:none; max-height:72vh; border-radius:18px 18px 0 0; transform:translateY(105%); } .cajon.abierto.hace-lugar { transform:translateY(105%); } }
 .notas-cab { display:flex; align-items:center; gap:8px; }
 .notas-cab h3 { font-size:12.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; margin:0; flex:1; }
 .plegar { font:inherit; font-size:15px; font-weight:800; line-height:1; width:24px; height:24px; border:1px solid #DDD9C6; background:#FCFBF5; color:#6A6F98; border-radius:8px; cursor:pointer; }
@@ -750,7 +779,7 @@ main { max-width:1400px; }
 .ficha .ava { width:24px; height:24px; font-size:10px; }
 .ficha.mini-f { cursor:default; margin:2px 4px 2px 0; } .ficha.mini-f i { font-style:normal; cursor:pointer; color:#A03434; margin-left:2px; }
 .ayuda { font-size:12px; color:#6A6F98; margin:8px 2px 12px; }
-.tablero { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(230px,1fr); gap:10px; overflow-x:auto; padding-bottom:12px; align-items:start; }
+.tablero { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(210px,1fr); gap:10px; overflow-x:auto; padding-bottom:12px; align-items:start; }
 @media (max-width:760px) { .tablero { grid-auto-columns:82vw; scroll-snap-type:x mandatory; } .col { scroll-snap-align:start; } }
 .col { background:#EFEDE2; border-radius:14px; padding:10px; min-height:120px; }
 .col.sobre { outline:2px dashed #2E4BC6; outline-offset:-2px; }

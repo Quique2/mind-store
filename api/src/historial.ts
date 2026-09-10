@@ -87,7 +87,7 @@ export function arrastres(tableros: Tablero[], vivas: Tarea[]): Arrastre[] {
 }
 
 /** Cuántas tareas cerró cada quien según los tableros: si estaba en una semana
- *  y ya no en la siguiente, se dio por cerrada. Es lo único que dicen las láminas. */
+ *  y ya no en la siguiente, se dio por cerrada, salvo que se haya marcado como vencida (cancelada). */
 export function cierresHistoricos(tableros: Tablero[], desde = "0000-00-00"): Map<string, number> {
   const orden = [...tableros].sort((a, b) => (a.semana < b.semana ? -1 : 1));
   const out = new Map<string, number>();
@@ -96,6 +96,7 @@ export function cierresHistoricos(tableros: Tablero[], desde = "0000-00-00"): Ma
     const siguientes = new Set(orden[i + 1].tareas.map((t) => clave(t.titulo)));
     for (const t of orden[i].tareas) {
       if (siguientes.has(clave(t.titulo))) continue;    // sigue viva: no se cerró
+      if (t.estado === "vencida") continue;          // cancelada: no se le acredita a nadie
       for (const m of t.quienes) out.set(m, (out.get(m) ?? 0) + 1);
     }
   }
@@ -182,7 +183,7 @@ ${arr.slice(0, 25).map((a) => {
 
 ${tablaCierres ? `<h2>Tareas cerradas según las láminas <small>de las semanas cargadas</small></h2>
 <div class="scroll"><table class="arr"><tr><th>Persona</th><th class="num">Cerradas</th></tr>${tablaCierres}</table></div>
-<p class="det">Se cuenta cuando una tarea aparece en una lámina y ya no en la siguiente. Las que no traían nombre no se le acreditan a nadie.</p>` : ""}
+<p class="det">Se cuenta cuando una tarea aparece en una lámina y ya no en la siguiente. Las que no traían nombre no se le acreditan a nadie, y las marcadas como canceladas no cuentan.</p>` : ""}
 
 <canvas id="lienzo" hidden></canvas>
 <script>
@@ -264,9 +265,10 @@ export interface CambioFoto {
 }
 const mismaGente = (a: string[], b: string[]) =>
   [...a].sort().join(",") === [...b].sort().join(",");
-/** La vigencia en una sola cadena, para comparar sin depender del orden de las llaves. */
+/** La vigencia en una sola cadena, para comparar sin depender del orden de las llaves.
+ *  «Con fechas» pero sin ninguna fecha es lo mismo que no traer vigencia. */
 export const vigTexto = (v?: TareaFoto["vigencia"]) =>
-  !v ? "" : [v.tipo, v.inicio ?? "", v.fin ?? "", v.evento ?? ""].join("|");
+  !v || (v.tipo === "fechas" && !v.inicio && !v.fin) ? "" : [v.tipo, v.inicio ?? "", v.fin ?? "", v.evento ?? ""].join("|");
 
 /** Qué cambió entre el tablero guardado y lo que manda el editor. */
 export function diffTablero(viejo: Tablero, nuevas: (TareaFoto & { ref: number })[]): CambioFoto[] {
@@ -290,6 +292,41 @@ export function diffTablero(viejo: Tablero, nuevas: (TareaFoto & { ref: number }
 export const areasDelCambio = (c: CambioFoto): string[] =>
   [...new Set([c.antes?.area, c.ahora?.area].filter((a): a is string => typeof a === "string"))];
 
+// ---------------- pendientes de láminas anteriores ----------------
+export interface Pendiente {
+  semana: string;              // lámina donde se vio por última vez
+  ref: number;                 // su fila en esa lámina
+  titulo: string; area: string; quienes: string[]; estado: TareaFoto["estado"];
+  detalle?: string; vigencia?: TareaFoto["vigencia"];
+}
+/** Lo que se quedó sin terminar en láminas anteriores y ya no aparece en esta.
+ *  Cada tarea sale una sola vez, con su última aparición. */
+export function pendientesAntes(tb: Tablero, tableros = leerTableros()): Pendiente[] {
+  const aqui = new Set(tb.tareas.map((t) => clave(t.titulo)));
+  const ultima = new Map<string, Pendiente>();
+  const antes = tableros.filter((x) => x.semana < tb.semana)
+    .sort((a, b) => (a.semana < b.semana ? -1 : 1));
+  for (const x of antes) {
+    x.tareas.forEach((t, i) => {
+      const k = clave(t.titulo);
+      if (!k) return;
+      ultima.set(k, {
+        semana: x.semana, ref: i, titulo: t.titulo, area: t.area, quienes: [...t.quienes], estado: t.estado,
+        ...(t.detalle ? { detalle: t.detalle } : {}), ...(t.vigencia ? { vigencia: { ...t.vigencia } } : {}),
+      });
+    });
+  }
+  return [...ultima.entries()]
+    .filter(([k, x]) => !aqui.has(k) && (x.estado === "pendiente" || x.estado === "curso"))
+    .map(([, x]) => x)
+    .sort((a, b) => (a.semana === b.semana ? a.area.localeCompare(b.area) : a.semana < b.semana ? 1 : -1));
+}
+/** Reemplaza varias láminas en una sola escritura, para que un guardado no quede a medias. */
+export function guardarTableros(nuevas: Tablero[]): void {
+  const semanas = new Set(nuevas.map((t) => t.semana));
+  guardar([...leerTableros().filter((x) => !semanas.has(x.semana)), ...nuevas]);
+}
+
 // ---------------- vista de edición, igualita al tablero ----------------
 export function renderHistorialEditor(p: Persona, tb: Tablero, eventos: EventoLite[]): string {
   const areas = leerAreas();
@@ -309,6 +346,7 @@ export function renderHistorialEditor(p: Persona, tb: Tablero, eventos: EventoLi
       quienes: [...t.quienes], estado: t.estado,
       vigencia: t.vigencia ? { ...t.vigencia } : { tipo: "fechas" as const },
     })),
+    pendientes: pendientesAntes(tb).map((x) => ({ ...x, k: `${x.semana}:${x.ref}` })),
   };
   const cuerpo = `
 <div class="vistas">
@@ -322,15 +360,23 @@ export function renderHistorialEditor(p: Persona, tb: Tablero, eventos: EventoLi
 </div>
 <div class="pool" id="pool"></div>
 <p class="ayuda" id="ayuda">Arrastra una persona a una tarea para dársela. En celular: toca la persona y luego la tarea. Toca la tarjeta para editarla completa.</p>
-<div class="zona-edit">
-  <div class="tablero" id="tablero"></div>
-  <aside class="resumen-edit" id="resumen-edit"></aside>
-</div>
+<div class="tablero" id="tablero"></div>
+<button type="button" class="pastilla" id="pastilla"></button>
+<aside class="cajon" id="cajon" aria-label="Panel de la lámina">
+  <div class="notas-cab"><h3>Panel de la lámina</h3><button type="button" class="plegar" id="plegar" title="Minimizar">–</button></div>
+  <div class="notas-tabs" id="cajon-tabs">
+    <button type="button" data-tab="pend" class="actual">🧩 Pendientes</button>
+    <button type="button" data-tab="reparto">📊 Reparto</button>
+  </div>
+  <div class="cajon-cuerpo" id="tab-pend"></div>
+  <div class="cajon-cuerpo" id="tab-reparto" hidden></div>
+</aside>
 <div id="hoja" class="hoja" hidden><div class="hoja-caja"><button class="cerrar" type="button" onclick="cerrarHoja()">✕</button><div id="hoja-cuerpo"></div></div></div>
 <div id="aviso-flotante" class="flotante" hidden></div>
 <script>
 const E = ${jsonSeguro(datos)};
 let ORIG = JSON.parse(JSON.stringify(E.tareas));
+E.resol = {};                     // pendientes resueltos aquí: clave -> 'hecha' | 'vencida'
 let sel = null;
 let arrastrando = null;
 let saliendo = false;
@@ -358,7 +404,7 @@ function avisa(txt, mal) {
   clearTimeout(avisa.t); avisa.t = setTimeout(() => { a.hidden = true; }, 3000);
 }
 // ---- qué cambió ----
-const vig = (v) => (v ? [v.tipo, v.inicio || '', v.fin || '', v.evento || ''].join('|') : '');
+const vig = (v) => (!v || (v.tipo === 'fechas' && !v.inicio && !v.fin) ? '' : [v.tipo, v.inicio || '', v.fin || '', v.evento || ''].join('|'));
 function cambios() {
   const out = []; const vistos = new Set();
   for (const t of E.tareas) {
@@ -373,8 +419,15 @@ function cambios() {
   ORIG.forEach((v) => { if (!vistos.has(v.ref)) out.push({ tipo: 'baja', antes: v }); });
   return out;
 }
+const resoluciones = () => Object.entries(E.resol)
+  .map(([k, estado]) => ({ k, estado, x: E.pendientes.find((y) => y.k === k) })).filter((r) => r.x);
+const totalCambios = () => cambios().length + resoluciones().length;
 function describe(c) {
-  if (c.tipo === 'alta') return ['➕ Se agrega', esc(c.ahora.titulo) + ' · ' + esc(areaN(c.ahora.area)) + ' · ' + esc(gente(c.ahora.quienes))];
+  if (c.tipo === 'alta') {
+    const de = c.ahora.desde ? E.pendientes.find((y) => y.k === c.ahora.desde) : null;
+    return [de ? '➕ Se trae de la lámina del ' + esc(fechaCorta(de.semana)) : '➕ Se agrega',
+      esc(c.ahora.titulo) + ' · ' + esc(areaN(c.ahora.area)) + ' · ' + esc(gente(c.ahora.quienes))];
+  }
   if (c.tipo === 'baja') return ['🗑️ Se quita', esc(c.antes.titulo) + ' · ' + esc(areaN(c.antes.area))];
   const partes = [];
   if (c.antes.titulo !== c.ahora.titulo) partes.push('nombre: «' + esc(c.antes.titulo) + '» → «' + esc(c.ahora.titulo) + '»');
@@ -387,15 +440,15 @@ function describe(c) {
   return ['✏️ ' + esc(c.ahora.titulo), partes.join(' · ')];
 }
 function refrescaBarra() {
-  const n = cambios().length;
+  const n = totalCambios();
   $('#cuenta-cambios').textContent = n ? (n === 1 ? '1 cambio sin guardar' : n + ' cambios sin guardar') : 'Sin cambios todavía';
   $('#barra-edit').classList.toggle('viva', n > 0);
   $('#btn-guardar').disabled = !n;
   $('#btn-descartar').disabled = !n;
 }
-window.addEventListener('beforeunload', (e) => { if (!saliendo && cambios().length) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', (e) => { if (!saliendo && totalCambios()) { e.preventDefault(); e.returnValue = ''; } });
 
-// ---- resumen vivo: cómo va quedando el reparto ----
+// ---- reparto vivo: cómo va quedando ----
 function pintaResumen() {
   const cuenta = new Map();
   let sinNombre = 0, hechas = 0;
@@ -409,7 +462,7 @@ function pintaResumen() {
     }
   }
   const filas = [...cuenta.entries()].sort((a, b) => b[1].trae - a[1].trae || nom(a[0]).localeCompare(nom(b[0]), 'es'));
-  $('#resumen-edit').innerHTML =
+  $('#tab-reparto').innerHTML =
     '<h3>Cómo va quedando</h3>' +
     '<p class="rr-tot"><b>' + E.tareas.length + '</b> tareas · <b>' + hechas + '</b> hechas' + (sinNombre ? ' · <b>' + sinNombre + '</b> sin nombre' : '') + '</p>' +
     (filas.length ? '<ul class="rr">' + filas.map(([m, c]) => {
@@ -420,6 +473,64 @@ function pintaResumen() {
     }).join('') + '</ul>' : '<p class="rr-vacio">Nadie tiene tareas en esta lámina todavía.</p>') +
     '<p class="rr-pie">Lo de arriba es esta lámina. «Acreditadas» son las cerradas que ya te cuentan en los Awards, y se actualiza al guardar.</p>';
 }
+// ---- pendientes de láminas anteriores ----
+function estadoPend(x) {
+  if (E.resol[x.k]) return E.resol[x.k];
+  if (E.tareas.some((t) => t.desde === x.k)) return 'traida';
+  return '';
+}
+function pendHTML(x, est) {
+  const a = area(x.area); const mio = puedo(x.area);
+  const g = x.quienes.map(persona).filter(Boolean);
+  const leyenda = est === 'traida' ? '➕ traída a esta semana' : est === 'hecha' ? '✓ se marcará hecha' : est === 'vencida' ? '✕ se marcará cancelada' : '';
+  return '<article class="pend' + (est ? ' resuelta r-' + est : '') + '" data-k="' + esc(x.k) + '" draggable="' + (mio && !est ? 'true' : 'false') + '" style="--c:' + (a ? a.color : '#6A6F98') + '">' +
+    '<div class="card-tit">' + esc(x.titulo) + '</div>' +
+    '<div class="pend-meta">' + esc(a ? a.emoji + ' ' + a.nombre : 'Sin área') + ' · vista el ' + esc(fechaCorta(x.semana)) + (x.estado === 'curso' ? ' · iba en curso' : '') + '</div>' +
+    '<div class="card-gente">' + (g.length ? g.map((s) => '<span class="ava chica" style="--c:' + s.color + '" title="' + esc(s.apodo) + '">' + esc(s.ini) + '</span>').join('') : '<span class="todos">SIN NOMBRE</span>') + '</div>' +
+    (est
+      ? '<div class="pend-acc"><span class="pend-estado">' + leyenda + '</span><button type="button" class="btn sec mini" data-deshacer="' + esc(x.k) + '">↶ Deshacer</button></div>'
+      : mio
+        ? '<div class="pend-acc"><button type="button" class="btn mini" data-traer="' + esc(x.k) + '" title="Agregarla a esta semana">➕ Traer</button>' +
+          '<button type="button" class="btn ok mini" data-hecha="' + esc(x.k) + '" title="Sí se hizo: se marca hecha en su lámina">✓ Se hizo</button>' +
+          '<button type="button" class="btn sec peligro mini" data-cancela="' + esc(x.k) + '" title="No se hizo: se marca cancelada y no cuenta en los Awards">✕ Se canceló</button></div>'
+        : '<div class="pend-acc"><span class="pend-estado otra">de otra área</span></div>') +
+    '</article>';
+}
+function pintaPend() {
+  const abiertas = E.pendientes.filter((x) => !estadoPend(x));
+  const resueltas = E.pendientes.filter((x) => estadoPend(x));
+  const cont = $('#tab-pend');
+  cont.innerHTML = E.pendientes.length
+    ? '<p class="rr-tot">Se quedaron sin terminar en láminas anteriores y ya no aparecen en esta. Arrástralas al tablero o resuélvelas aquí.</p>' +
+      (abiertas.length ? abiertas.map((x) => pendHTML(x, '')).join('') : '<p class="rr-vacio">✓ Todo resuelto. Solo falta guardar.</p>') +
+      (resueltas.length ? '<h4 class="pend-sub">Resueltas en esta edición</h4>' + resueltas.map((x) => pendHTML(x, estadoPend(x))).join('') : '')
+    : '<p class="rr-vacio">No quedó nada pendiente de las láminas anteriores. 🎉</p>';
+  $('#cajon-tabs [data-tab="pend"]').textContent = '🧩 Pendientes' + (abiertas.length ? ' · ' + abiertas.length : '');
+  cont.querySelectorAll('[data-traer]').forEach((b) => b.addEventListener('click', () => traer(b.dataset.traer)));
+  cont.querySelectorAll('[data-hecha]').forEach((b) => b.addEventListener('click', () => resuelve(b.dataset.hecha, 'hecha')));
+  cont.querySelectorAll('[data-cancela]').forEach((b) => b.addEventListener('click', () => resuelve(b.dataset.cancela, 'vencida')));
+  cont.querySelectorAll('[data-deshacer]').forEach((b) => b.addEventListener('click', () => deshacer(b.dataset.deshacer)));
+  cont.querySelectorAll('.pend[draggable="true"]').forEach((el) => {
+    el.addEventListener('dragstart', (e) => { arrastrando = 'pend'; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'pend:' + el.dataset.k); el.classList.add('llevando'); });
+    el.addEventListener('dragend', () => { arrastrando = null; el.classList.remove('llevando'); });
+  });
+  ponPastilla();
+}
+/** La trae a esta lámina, a su misma área o a la columna donde se soltó. */
+function traer(k, destino) {
+  const x = E.pendientes.find((y) => y.k === k); if (!x || estadoPend(x)) return;
+  const dest = destino === undefined ? x.area : destino;
+  if (!puedo(x.area) || !puedo(dest)) { avisa('No puedes mover tareas entre esas áreas.', true); return; }
+  E.tareas.push({ ref: siguienteNueva--, titulo: x.titulo, detalle: x.detalle || '', area: dest, quienes: [...x.quienes],
+    estado: x.estado, vigencia: x.vigencia ? { ...x.vigencia } : { tipo: 'fechas' }, desde: k });
+  refresca(); avisa('➕ ' + x.titulo + ' → ' + areaN(dest));
+}
+function resuelve(k, estado) {
+  const x = E.pendientes.find((y) => y.k === k); if (!x || !puedo(x.area)) return;
+  E.resol[k] = estado; refresca();
+  avisa(estado === 'hecha' ? '✓ ' + x.titulo + ' · se marcará hecha' : '✕ ' + x.titulo + ' · se marcará cancelada');
+}
+function deshacer(k) { delete E.resol[k]; E.tareas = E.tareas.filter((t) => t.desde !== k); refresca(); }
 // ---- pool de personas ----
 function pintaPool() {
   $('#pool').innerHTML = E.staff.map((s) => '<button type="button" class="ficha' + (sel === s.mat ? ' sel' : '') + '" draggable="true" data-mat="' + esc(s.mat) + '" style="--c:' + s.color + '"><span class="ava">' + esc(s.ini) + '</span><span>' + esc(s.apodo) + '</span></button>').join('');
@@ -443,11 +554,11 @@ function tarjetaHTML(t) {
   return '<article class="card est-' + t.estado + (dim ? ' dim' : '') + (sel && t.quienes.includes(sel) ? ' foco' : '') + (t.ref < 0 ? ' nueva' : '') + '" data-k="' + clave(t) + '" draggable="' + (mio ? 'true' : 'false') + '">' +
     '<div class="card-tit">' + esc(t.titulo) + '</div>' +
     '<div class="card-meta"><span class="dot" title="' + esc(E.estados[t.estado].nombre) + '"></span><span>' + esc(E.estados[t.estado].nombre) + '</span><span>· ' + esc(cuando(t)) + '</span>' +
-      (t.detalle ? '<span title="' + esc(t.detalle) + '">📝</span>' : '') + (t.ref < 0 ? '<span>nueva</span>' : '') + '</div>' +
+      (t.detalle ? '<span title="' + esc(t.detalle) + '">📝</span>' : '') + (t.desde ? '<span>traída</span>' : t.ref < 0 ? '<span>nueva</span>' : '') + '</div>' +
     '<div class="card-gente">' + avatares + '</div>' +
     (mio ? '<button type="button" class="mas" data-abrir="' + clave(t) + '" title="Editar">···</button>' : '') + '</article>';
 }
-function refresca() { pinta(); pintaResumen(); refrescaBarra(); }
+function refresca() { pinta(); pintaResumen(); pintaPend(); refrescaBarra(); }
 function pinta() {
   const cols = [...E.areas, { id: '', nombre: 'Sin área', color: '#6A6F98', emoji: '•' }];
   $('#tablero').innerHTML = cols.map((a) => {
@@ -484,10 +595,11 @@ function pinta() {
     c.addEventListener('drop', (e) => { e.preventDefault(); c.classList.remove('sobre'); const d = e.dataTransfer.getData('text/plain') || ''; if (d.startsWith('mat:')) { e.stopPropagation(); da(k, d.slice(4)); } });
   });
   document.querySelectorAll('.col').forEach((col) => {
-    col.addEventListener('dragover', (e) => { if (arrastrando === 'tarea') { e.preventDefault(); col.classList.add('sobre'); } });
+    col.addEventListener('dragover', (e) => { if (arrastrando === 'tarea' || arrastrando === 'pend') { e.preventDefault(); col.classList.add('sobre'); } });
     col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('sobre'); });
     col.addEventListener('drop', (e) => {
       const d = e.dataTransfer.getData('text/plain') || ''; col.classList.remove('sobre');
+      if (d.startsWith('pend:')) { e.preventDefault(); traer(d.slice(5), col.dataset.area); return; }
       if (!d.startsWith('tarea:')) return;
       e.preventDefault();
       const t = busca(d.slice(6)); const destino = col.dataset.area;
@@ -553,37 +665,73 @@ function aplica(k) {
 }
 // ---- el seguro antes de guardar ----
 function confirmar() {
-  const l = cambios();
-  if (!l.length) return;
+  const l = cambios(); const r = resoluciones();
+  if (!l.length && !r.length) return;
+  const items = l.map(describe).concat(r.map((z) => [
+    (z.estado === 'hecha' ? '✓ ' : '✕ ') + 'En la lámina del ' + esc(fechaCorta(z.x.semana)),
+    esc(z.x.titulo) + ' → ' + (z.estado === 'hecha' ? 'Hecha' : 'Cancelada (deja de contar en los Awards)')]));
   abrirHoja('<div class="hoja-item"><b>¿Seguro que quieres guardar?</b>' +
-    '<p class="det">Vas a cambiar la lámina de la semana. Esto mueve también a quién se le acreditan las tareas cerradas en los Awards.</p>' +
-    '<ul class="cambios">' + l.map((c) => { const [t, d] = describe(c); return '<li><b>' + t + '</b>' + (d ? '<span>' + d + '</span>' : '') + '</li>'; }).join('') + '</ul>' +
+    '<p class="det">Vas a cambiar la lámina de la semana' + (r.length ? ' y resolver pendientes de láminas anteriores' : '') + '. Esto mueve también a quién se le acreditan las tareas cerradas en los Awards.</p>' +
+    '<ul class="cambios">' + items.map(([t, d]) => '<li><b>' + t + '</b>' + (d ? '<span>' + d + '</span>' : '') + '</li>').join('') + '</ul>' +
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">' +
-    '<button class="btn" type="button" id="b-si">Sí, guardar los ' + l.length + ' cambios</button>' +
+    '<button class="btn" type="button" id="b-si">Sí, guardar los ' + items.length + ' cambios</button>' +
     '<button class="btn sec" type="button" id="b-no">No, seguir editando</button></div></div>');
   $('#b-no').addEventListener('click', cerrarHoja);
   $('#b-si').addEventListener('click', async () => {
     const b = $('#b-si'); b.disabled = true; b.textContent = 'Guardando…';
     try {
-      const r = await fetch('/api/historial/guardar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ semana: E.semana, tareas: E.tareas }) });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || ('error ' + r.status));
-      // se queda en la página: se renumera lo guardado y se refrescan los créditos
-      E.tareas = E.tareas.map((t, i) => ({ ...t, ref: i }));
+      const res = await fetch('/api/historial/guardar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ semana: E.semana, tareas: E.tareas,
+          resoluciones: r.map((z) => ({ semana: z.x.semana, ref: z.x.ref, estado: z.estado })) }) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || ('error ' + res.status));
+      // se queda en la página: se renumera lo guardado y se refrescan créditos y pendientes
+      E.tareas = E.tareas.map((t, i) => { const c = { ...t, ref: i }; delete c.desde; return c; });
       ORIG = JSON.parse(JSON.stringify(E.tareas));
+      E.resol = {};
       siguienteNueva = -1;
       if (j.creditos) E.creditos = j.creditos;
+      if (j.pendientes) E.pendientes = j.pendientes;
       cerrarHoja(); refresca(); avisa(j.aviso || '✓ Guardado');
     } catch (e) { b.disabled = false; b.textContent = 'Sí, guardar'; avisa(e.message, true); }
   });
 }
 function abrirHoja(html) { $('#hoja-cuerpo').innerHTML = html; $('#hoja').hidden = false; document.body.style.overflow = 'hidden'; }
 function cerrarHoja() { $('#hoja').hidden = true; document.body.style.overflow = ''; }
+// ---- cajón flotante: pendientes y reparto, sin apretar el tablero ----
+const CAJON = $('#cajon'), PASTILLA = $('#pastilla');
+let cajonAbierto = true;
+try { const v = localStorage.getItem('mind-hist-cajon'); if (v) cajonAbierto = v === 'abierto'; } catch (e) {}
+function cajon(accion) {
+  if (accion === 'abrir' || accion === 'cerrar') {
+    cajonAbierto = accion === 'abrir';
+    try { localStorage.setItem('mind-hist-cajon', cajonAbierto ? 'abierto' : 'cerrado'); } catch (e) {}
+  }
+  CAJON.classList.toggle('abierto', cajonAbierto);
+  CAJON.classList.toggle('hace-lugar', accion === 'lugar');
+  ponPastilla();
+}
+function ponPastilla() {
+  const n = E.pendientes.filter((x) => !estadoPend(x)).length;
+  PASTILLA.textContent = n ? '🧩 Pendientes · ' + n : '📊 Panel de la lámina';
+  PASTILLA.hidden = cajonAbierto && !CAJON.classList.contains('hace-lugar');
+}
+function ponTab(t) {
+  document.querySelectorAll('#cajon-tabs button').forEach((b) => b.classList.toggle('actual', b.dataset.tab === t));
+  $('#tab-pend').hidden = t !== 'pend';
+  $('#tab-reparto').hidden = t !== 'reparto';
+}
+document.querySelectorAll('#cajon-tabs button').forEach((b) => b.addEventListener('click', () => ponTab(b.dataset.tab)));
+PASTILLA.addEventListener('click', () => cajon('abrir'));
+$('#plegar').addEventListener('click', () => cajon('cerrar'));
+// al arrastrar lo que sea, el cajón se hace a un lado para soltar en cualquier columna
+document.addEventListener('dragstart', () => { setTimeout(() => cajon('lugar'), 0); });
+document.addEventListener('dragend', () => { cajon('volver'); });
 $('#hoja').addEventListener('click', (e) => { if (e.target.id === 'hoja') cerrarHoja(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { cerrarHoja(); if (sel) { sel = null; pintaPool(); pinta(); } } });
 $('#btn-guardar').addEventListener('click', confirmar);
 $('#btn-descartar').addEventListener('click', () => { if (confirm('¿Descartar todos los cambios sin guardar?')) { saliendo = true; location.reload(); } });
+cajon('volver');
 pintaPool(); refresca();
 </script>`;
   return paginaPortal("Editar lámina · MIND",
@@ -599,20 +747,31 @@ const CSS_EDIT = `
 .barra-edit.viva span { color:#8A6A10; }
 .card.nueva { border-style:dashed; border-color:#8BC53F; }
 .acc { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
-.zona-edit { display:grid; grid-template-columns:minmax(0,1fr) 262px; gap:14px; align-items:start; }
-@media (max-width:1050px) { .zona-edit { grid-template-columns:minmax(0,1fr); } }
-.resumen-edit { background:#fff; border:1px solid #E4E1D2; border-radius:14px; padding:12px 13px; position:sticky; top:64px; }
-.resumen-edit h3 { font-size:12.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; margin:0 0 8px; }
-.rr-tot { font-size:12.5px; color:#6A6F98; margin:0 0 10px; }
+.cajon-cuerpo { flex:1; min-height:0; overflow-y:auto; margin-top:8px; padding-right:2px; }
+.cajon-cuerpo h3 { font-size:12.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; margin:0 0 8px; }
+.rr-tot { font-size:12px; color:#6A6F98; margin:0 0 10px; line-height:1.45; }
 .rr-tot b { color:#1C2260; }
-ul.rr { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; max-height:46vh; overflow-y:auto; }
+ul.rr { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
 ul.rr li { display:flex; align-items:center; gap:8px; }
 ul.rr .rr-n { flex:1; min-width:0; font-size:12.5px; font-weight:700; color:#1C2260; }
 ul.rr .rr-n i { display:block; font-style:normal; font-size:10.5px; font-weight:600; color:#A0A5C2; }
 ul.rr .rr-c { flex:none; text-align:right; }
 ul.rr .rr-c b { display:block; font-size:15px; font-weight:800; line-height:1; }
 ul.rr .rr-c small { font-size:10px; color:#A0A5C2; }
-.rr-vacio, .rr-pie { font-size:11px; color:#8A8FB5; margin:8px 0 0; line-height:1.4; }
+.rr-vacio, .rr-pie { font-size:11.5px; color:#8A8FB5; margin:8px 0 0; line-height:1.45; }
+.pend { background:#fff; border:1px solid #E4E1D2; border-left:4px solid var(--c); border-radius:12px; padding:9px 11px; margin-bottom:8px; cursor:grab; transition:box-shadow .12s; }
+.pend[draggable="false"] { cursor:default; }
+.pend:hover { box-shadow:0 4px 12px rgba(16,22,66,.08); }
+.pend.llevando { opacity:.45; }
+.pend .card-tit { font-size:13px; }
+.pend-meta { font-size:11px; color:#8A8FB5; margin:3px 0 6px; }
+.pend-acc { display:flex; gap:5px; flex-wrap:wrap; align-items:center; margin-top:8px; }
+.pend-acc .btn.mini { padding:5px 9px; font-size:11.5px; }
+.pend-estado { flex:1; min-width:0; font-size:11px; font-weight:700; color:#3F6B10; }
+.pend-estado.otra { color:#A0A5C2; }
+.pend.resuelta { opacity:.7; border-left-style:dashed; background:#FCFBF5; }
+.pend.r-vencida .pend-estado { color:#A03434; }
+.pend-sub { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:#8A8FB5; margin:14px 0 8px; }
 ul.cambios { list-style:none; margin:12px 0 0; padding:0; display:flex; flex-direction:column; gap:7px; max-height:44vh; overflow-y:auto; }
 ul.cambios li { background:#F7F5EC; border:1px solid #E4E1D2; border-radius:10px; padding:8px 11px; font-size:13px; line-height:1.4; }
 ul.cambios li b { display:block; font-size:13px; }

@@ -34,7 +34,8 @@ import { leerEnlaces, crearEnlace, editarEnlace, alternarEnlace, moverEnlace, bo
 import { renderCarga } from "./carga";
 import { conClave } from "./ui";
 import { renderHistorial, renderHistorialEditor, diffTablero, areasDelCambio, cierresConActual,
-         leerTableros, guardarTablero, fotoActual, type TareaFoto } from "./historial";
+         leerTableros, guardarTablero, guardarTableros, pendientesAntes, fotoActual,
+         type TareaFoto, type Tablero } from "./historial";
 import { renderAwards, calcularAwards, CATEGORIAS, PESOS, type Periodo, type Orden } from "./awards";
 import { slug } from "./products";
 import { notionActivo, espejar, espejarPronto, importarDeNotion, EXT_EVIDENCIA } from "./notion";
@@ -1082,6 +1083,12 @@ const FotoSchema = z.object({
     estado: z.enum(["pendiente", "curso", "hecha", "vencida"]),
     vigencia: VigFoto,
   })).max(200),
+  // pendientes de láminas anteriores resueltos desde el panel: se hizo o se canceló
+  resoluciones: z.array(z.object({
+    semana: z.string().length(10),
+    ref: z.number().int().min(0),
+    estado: z.enum(["hecha", "vencida"]),
+  })).max(200).optional().default([]),
 });
 app.post("/api/historial/guardar", (req, res) => {
   const p = jsonSesion(req, res);
@@ -1105,7 +1112,8 @@ app.post("/api/historial/guardar", (req, res) => {
   }
   const limpia = (t: (typeof d.tareas)[number]): TareaFoto => {
     const v = t.vigencia;
-    const vig = v
+    // «con fechas» sin ninguna fecha es lo mismo que no traer vigencia: no se guarda
+    const vig = v && !(v.tipo === "fechas" && !v.inicio && !v.fin)
       ? { tipo: v.tipo, ...(v.inicio ? { inicio: v.inicio } : {}), ...(v.fin ? { fin: v.fin } : {}),
           ...(v.evento ? { evento: v.evento } : {}) }
       : undefined;
@@ -1113,7 +1121,24 @@ app.post("/api/historial/guardar", (req, res) => {
              ...(t.detalle ? { detalle: t.detalle } : {}), ...(vig ? { vigencia: vig } : {}) };
   };
   const cambios = diffTablero(viejo, d.tareas.map((t) => ({ ...limpia(t), ref: t.ref })));
-  if (!cambios.length) return res.json({ aviso: "No había nada que cambiar." });
+  const todas = leerTableros();
+  const tocadas = new Map<string, Tablero>();
+  for (const r of d.resoluciones) {
+    if (r.semana >= d.semana) return res.status(400).json({ error: "Solo se resuelven tareas de láminas anteriores." });
+    let lam = tocadas.get(r.semana);
+    if (!lam) {
+      const orig = todas.find((t) => t.semana === r.semana);
+      if (!orig) return res.status(404).json({ error: "Una de las láminas anteriores ya no está; recarga la página." });
+      lam = { ...orig, tareas: orig.tareas.map((t) => ({ ...t })) };
+      tocadas.set(r.semana, lam);
+    }
+    const t = lam.tareas[r.ref];
+    if (!t) return res.status(400).json({ error: "Una de las tareas por resolver ya no está; recarga la página." });
+    const puede = t.area ? dirigeArea(p, t.area, areas) : esPresidencia(p);
+    if (!puede) return res.status(403).json({ error: `No puedes resolver tareas de ${areas.find((x) => x.id === t.area)?.nombre ?? "esa área"}.` });
+    t.estado = r.estado;
+  }
+  if (!cambios.length && !tocadas.size) return res.json({ aviso: "No había nada que cambiar." });
   for (const cambio of cambios) {
     for (const a of areasDelCambio(cambio)) {
       const puede = a ? dirigeArea(p, a, areas) : esPresidencia(p);
@@ -1122,12 +1147,14 @@ app.post("/api/historial/guardar", (req, res) => {
   }
   if (!hayDiscoPersistente()) return res.status(503).json({ error: "No hay disco persistente." });
   const ahora = new Date().toISOString();
-  guardarTablero({
-    ...viejo, guardado: ahora, editadoPor: p.matricula, editadoEl: ahora,
-    tareas: d.tareas.map(limpia),
-  });
+  const principal: Tablero = { ...viejo, guardado: ahora, editadoPor: p.matricula, editadoEl: ahora, tareas: d.tareas.map(limpia) };
+  const sellar = (t: Tablero): Tablero => ({ ...t, guardado: ahora, editadoPor: p.matricula, editadoEl: ahora });
+  guardarTableros([...(cambios.length ? [principal] : []), ...[...tocadas.values()].map(sellar)]);
+  const nCambios = cambios.length + d.resoluciones.length;
+  const actual = leerTableros().find((t) => t.semana === d.semana) ?? principal;
   // los creditos ya recalculados, para que el editor se refresque sin recargar
-  res.json({ creditos: Object.fromEntries(cierresConActual()), aviso: `\u2713 Lámina guardada con ${cambios.length} cambio${cambios.length === 1 ? "" : "s"}` });
+  res.json({ creditos: Object.fromEntries(cierresConActual()),
+    pendientes: pendientesAntes(actual).map((x) => ({ ...x, k: `${x.semana}:${x.ref}` })), aviso: `\u2713 Lámina guardada con ${nCambios} cambio${nCambios === 1 ? "" : "s"}` });
 });
 
 // carga de un tablero viejo (con la clave del panel): valida antes de escribir

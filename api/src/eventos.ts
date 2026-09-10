@@ -489,21 +489,35 @@ export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre
   const filasEv = evOrden.map((e) => {
     const url = `${base}/asistencia/${e.id}`;
     const nPre = conteoPre.get(e.id) ?? 0;
-    return `<tr data-id="${esc(e.id)}"><td>${esc(fechaBonita(e.fecha))}${e.hora ? `<div class="det">${esc(horaBonita(e.hora))}</div>` : ""}</td><td>${badgeEv(e)}</td>
-<td><b>${esc(e.titulo)}</b>${e.porConfirmar ? ' <span class="est porconf">por confirmar</span>' : ""}${lugarAnuncio(e) ? `<div class="det">📍 ${esc(lugarAnuncio(e))}</div>` : ""}<div class="det"><code>${esc(url)}</code></div></td>
-<td class="num">${cuenta(e.id)}${!juntas && conteoStaff.get(e.id) ? `<div class="det">+${conteoStaff.get(e.id)} staff</div>` : ""}${nPre ? `<div class="det">${nPre} prerreg.</div>` : ""}</td>
-<td>${e.abierto ? '<span class="est abierto">abierto</span>' : '<span class="est cerrado">cerrado</span>'}${e.prereg ? '<div style="margin-top:3px"><span class="est prereg">prerreg.</span></div>' : ""}</td>
-<td class="acc"><a class="btn sec" href="${wa(`${TIPOS[e.tipo].emoji} ${e.titulo}\nRegistra tu asistencia aquí 👉 ${url}`)}" target="_blank" rel="noopener">WhatsApp</a>
-<button class="btn sec" type="button" onclick="copiar('${esc(url)}',this)">Copiar</button>
-<a class="btn sec" href="/asistencia/${esc(e.id)}/qr" target="_blank">QR</a>
-${juntas ? "" : `<a class="btn sec" href="/galeria?evento=${esc(e.id)}${yClave(clave)}" title="Fotos y videos de este evento">Fotos</a>
-<form method="post" action="/eventos/prereg${q}" style="display:inline"><input type="hidden" name="id" value="${esc(e.id)}">
-<button class="btn sec" type="submit" title="Apartar lugares antes del evento">${e.prereg ? "Cerrar prerreg." : "Abrir prerreg."}</button></form>`}
-<form method="post" action="/eventos/alternar${q}" style="display:inline"><input type="hidden" name="id" value="${esc(e.id)}">
-<button class="btn sec" type="submit">${e.abierto ? "Cerrar" : "Reabrir"}</button></form>
-<button class="btn sec" type="button" onclick="editar('${esc(e.id)}')">Editar</button>
-<a class="btn sec peligro" href="/eventos/borrar${q}&id=${esc(e.id)}" title="Borrar (pide confirmación)">Borrar</a></td></tr>
-<tr class="edicion" id="ed-${esc(e.id)}" hidden><td colspan="6">
+    const nStaff = conteoStaff.get(e.id) ?? 0;
+    const cuandoEv = `${fechaBonita(e.fecha)}${e.hora ? ` · ${horaBonita(e.hora)}` : ""}`;
+    return `<article class="ev-card${e.abierto ? " vivo" : ""}" data-id="${esc(e.id)}">
+<div class="ev-top">
+  <div class="ev-info">
+    <div class="ev-chips">${badgeEv(e)}${e.abierto ? '<span class="est abierto">abierto</span>' : '<span class="est cerrado">cerrado</span>'}${e.prereg ? '<span class="est prereg">prerreg.</span>' : ""}${e.porConfirmar ? '<span class="est porconf">por confirmar</span>' : ""}</div>
+    <h3>${esc(e.titulo)}</h3>
+    <div class="ev-det">📅 ${esc(cuandoEv)}${lugarAnuncio(e) ? ` · 📍 ${esc(lugarAnuncio(e))}` : ""}</div>
+    <div class="ev-link" title="${esc(url)}">🔗 <code>/asistencia/${esc(e.id)}</code></div>
+  </div>
+  <div class="ev-num"><b>${cuenta(e.id)}</b><small>${juntas ? "asistieron" : "asistentes"}</small>${!juntas && nStaff ? `<span>+${nStaff} staff</span>` : ""}${nPre ? `<span>${nPre} prerreg.</span>` : ""}</div>
+</div>
+<div class="ev-acc">
+  <div class="ev-grupo">
+    <a class="btn sec chico" href="${wa(`${TIPOS[e.tipo].emoji} ${e.titulo}\nRegistra tu asistencia aquí 👉 ${url}`)}" target="_blank" rel="noopener">WhatsApp</a>
+    <button class="btn sec chico" type="button" onclick="copiar('${esc(url)}',this)">Copiar</button>
+    <a class="btn sec chico" href="/asistencia/${esc(e.id)}/qr" target="_blank">QR</a>
+  </div>
+  <div class="ev-grupo">
+    ${juntas ? "" : `<a class="btn sec chico" href="/galeria?evento=${esc(e.id)}${yClave(clave)}" title="Fotos y videos de este evento">Fotos</a>
+    <form method="post" action="/eventos/prereg${q}"><input type="hidden" name="id" value="${esc(e.id)}">
+    <button class="btn sec chico" type="submit" title="Apartar lugares antes del evento">${e.prereg ? "Cerrar prerreg." : "Abrir prerreg."}</button></form>`}
+    <form method="post" action="/eventos/alternar${q}"><input type="hidden" name="id" value="${esc(e.id)}">
+    <button class="btn sec chico" type="submit">${e.abierto ? "Cerrar" : "Reabrir"}</button></form>
+    <button class="btn sec chico" type="button" onclick="editar('${esc(e.id)}')">Editar</button>
+    <a class="btn sec chico peligro" href="/eventos/borrar${q}&id=${esc(e.id)}" title="Borrar (pide confirmación)">Borrar</a>
+  </div>
+</div>
+<div class="ev-edicion" id="ed-${esc(e.id)}" hidden>
 <form method="post" action="/eventos/editar${q}" class="fila">
   <input type="hidden" name="id" value="${esc(e.id)}">
   <div style="grid-column:1/-1"><label>Título</label><input name="titulo" value="${esc(e.titulo)}" required maxlength="80"></div>
@@ -513,7 +527,8 @@ ${juntas ? "" : `<a class="btn sec" href="/galeria?evento=${esc(e.id)}${yClave(c
   <div style="grid-column:1/-1"><label>Nota</label><input name="nota" value="${esc(e.nota ?? "")}" maxlength="80" placeholder="ponente, detalles…"></div>
   <div class="check"><label><input type="checkbox" name="porConfirmar"${e.porConfirmar ? " checked" : ""}> Fecha y lugar por confirmar</label></div>
   <div style="align-self:end"><button class="btn" type="submit">Guardar cambios</button></div>
-</form></td></tr>`;
+</form></div>
+</article>`;
   }).join("");
   const datos = asis.map((a) => {
     const e = evs.find((x) => x.id === a.evento);
@@ -612,6 +627,28 @@ td.acciones { white-space:nowrap; } td.acciones form { display:inline; }
 .pre-card .pre-num { text-align:right; } .pre-card .pre-num b { font-size:22px; font-weight:800; display:block; }
 .pre-card .pre-num small { font-size:10.5px; color:#6A6F98; text-transform:uppercase; letter-spacing:.06em; }
 .pre-card .acc { grid-column:1 / -1; }
+.ev-lista { display:grid; gap:10px; }
+.ev-card { background:#fff; border:1px solid #E4E1D2; border-radius:16px; padding:14px 16px; }
+.ev-card.vivo { border-color:#BEDD97; box-shadow:0 0 0 3px rgba(139,197,63,.13); }
+.ev-top { display:flex; gap:14px; align-items:flex-start; }
+.ev-info { flex:1; min-width:0; }
+.ev-chips { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:6px; }
+.ev-card h3 { font-size:16px; font-weight:800; line-height:1.3; }
+.ev-det { font-size:12.5px; color:#6A6F98; margin-top:3px; }
+.ev-link { font-size:11.5px; color:#8A8FB5; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ev-link code { font-family:'IBM Plex Mono',ui-monospace,monospace; }
+.ev-num { flex:none; text-align:right; min-width:78px; }
+.ev-num b { display:block; font-size:26px; font-weight:800; line-height:1; font-variant-numeric:tabular-nums; }
+.ev-num small { display:block; font-size:10px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:#8A8FB5; margin-top:3px; }
+.ev-num span { display:block; font-size:11px; color:#6A6F98; margin-top:3px; }
+.ev-acc { display:flex; justify-content:space-between; gap:8px 14px; flex-wrap:wrap; margin-top:12px; padding-top:12px; border-top:1px solid #F0EDE0; }
+.ev-grupo { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.ev-grupo form { margin:0; }
+.btn.chico { font-size:12.5px; padding:7px 12px; min-height:34px; }
+.ev-edicion { background:#F4FBFD; border:1px solid #DDF1F8; border-radius:12px; padding:12px; margin-top:12px; }
+.ev-edicion input { min-height:38px; font-size:14px; padding:7px 10px; }
+.pre-card .acc { white-space:normal; display:flex; flex-wrap:wrap; gap:6px; }
+@media (max-width:560px) { .ev-top { flex-direction:column; gap:8px; } .ev-num { text-align:left; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; } .ev-num b { display:inline; } .ev-num small, .ev-num span { display:inline; margin:0; } }
 </style></head><body>
 <header>${navAdmin(clave, "eventos")}<h1>${juntas ? "Juntas de staff" : "Eventos MIND"}</h1><p>${juntas
   ? "Crea la junta, palomea a quienes estuvieron o comparte el enlace, y el historial de asistencia del staff se arma solo"
@@ -646,10 +683,9 @@ ${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
 </form>
 
 <h2>${juntas ? "Juntas" : "Eventos"}</h2>
-<div class="tabla-scroll"><table>
-<tr><th>Fecha</th><th>Tipo</th><th>${juntas ? "Junta" : "Evento"} · enlace</th><th class="num">Asist.</th><th>Estado</th><th></th></tr>
-${filasEv || `<tr><td colspan="6" class="vacio">Todavía no hay ${juntas ? "juntas" : "eventos"} — crea ${juntas ? "la primera" : "el primero"} arriba.</td></tr>`}
-</table></div>
+<div class="ev-lista">
+${filasEv || `<p class="vacio tarjeta">Todavía no hay ${juntas ? "juntas" : "eventos"} — crea ${juntas ? "la primera" : "el primero"} arriba.</p>`}
+</div>
 
 ${juntas ? "" : `<h2>Prerregistro</h2>
 ${abiertos.length ? tarjetasPre : '<p class="vacio">Ningún evento tiene prerregistro abierto. Ábrelo con el botón «Abrir prerreg.» del evento y comparte el enlace para que aparten su lugar.</p>'}
