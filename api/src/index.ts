@@ -606,18 +606,42 @@ app.get("/portal", (req, res) => {
   res.type("html").send(renderYo(p, leerTareas(), leerAreas(), leerStaff(), eventosLite(), avisoDe(req)));
 });
 
+// Un PIN son cuatro dígitos: sin freno, alguien podría probarlos todos.
+// Cinco fallos seguidos cierran esa matrícula durante quince minutos.
+const fallos = new Map<string, { n: number; hasta: number }>();
+const FRENO_MIN = 15, FRENO_TOPE = 5;
+function frenado(mat: string): number {
+  const f = fallos.get(mat);
+  if (!f || f.hasta < Date.now()) return 0;
+  return Math.ceil((f.hasta - Date.now()) / 60000);
+}
+function anotaFallo(mat: string): void {
+  const f = fallos.get(mat) ?? { n: 0, hasta: 0 };
+  f.n++;
+  if (f.n >= FRENO_TOPE) { f.hasta = Date.now() + FRENO_MIN * 60000; f.n = 0; }
+  fallos.set(mat, f);
+}
+
 app.post("/portal/entrar", urlencoded, (req, res) => {
   const b = req.body as { matricula?: string; pin?: string };
   const mat = normMat(String(b.matricula ?? ""));
   const pin = String(b.pin ?? "");
+  const espera = frenado(mat);
+  if (espera) {
+    return res.status(429).type("html").send(renderEntrar(
+      `Demasiados intentos. Vuelve a intentar en ${espera} minuto${espera === 1 ? "" : "s"}.`, mat));
+  }
   const lista = leerStaff();
   const p = lista.find((x) => x.matricula === mat);
   if (!p || !p.activo || !p.pinHash) {
+    anotaFallo(mat);
     return res.status(401).type("html").send(renderEntrar("No encontramos esa matrícula o todavía no tiene PIN. Pídeselo a Alexa.", mat));
   }
   if (!pinCorrecto(p, pin)) {
+    anotaFallo(mat);
     return res.status(401).type("html").send(renderEntrar("PIN incorrecto. Inténtalo otra vez.", mat));
   }
+  fallos.delete(mat);
   p.ultimoAcceso = new Date().toISOString();
   guardarStaff(lista);
   res.setHeader("Set-Cookie", cookieSesion(crearSesion(p.matricula), conTLS(req)));

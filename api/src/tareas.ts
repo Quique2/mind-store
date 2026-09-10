@@ -284,5 +284,7 @@ export function resumenTareas() {
   }).filter((x) => x.total).sort((a, b) => b.pct - a.pct || b.total - a.total);
   return { total: l.length, abiertas: abiertas.length, atrasadas: l.filter(atrasada).length,
            hechas: l.filter((t) => t.estado === "hecha").length, porArea, porPersona,
-           conCuenta: staff.filter((p) => p.pinHash).length, staff: staff.length };
+           conCuenta: staff.filter((p) => p.pinHash).length,
+           activadas: staff.filter((p) => p.pinHash && !p.provisional).length,
+           staff: staff.length };
 }

@@ -408,7 +408,7 @@ ${r.preAbiertos.length ? `<div class="accesos">${r.preAbiertos.map((e) =>
     <p class="det" style="margin-top:8px"><a href="/juntas${q}" style="color:#2E4BC6;font-weight:600">Pasar lista en una junta →</a></p></div>
 </div>
 
-<h2>✅ Tareas del equipo <small>${tar.abiertas} abiertas · ${tar.atrasadas} atrasadas · ${tar.conCuenta} de ${tar.staff} cuentas activadas</small></h2>
+<h2>✅ Tareas del equipo <small>${tar.abiertas} abiertas · ${tar.atrasadas} atrasadas · ${tar.activadas} de ${tar.staff} ya eligieron su PIN</small></h2>
 <div class="grid2">
   <div class="graf"><h3>Cumplimiento por área</h3>
     ${tar.porArea.length ? `<table><tr><th>Área</th><th class="num">Hechas</th><th class="num">Total</th><th class="num">%</th></tr>${
