@@ -1,6 +1,7 @@
 // Puente con Notion: importa lo que viene del semestre actual y mantiene un
 // espejo de solo lectura dentro de una página propia.
 // NUNCA escribe en las bases que el grupo ya usa: solo en su propia página.
+import { diaLocal } from "./fecha";
 import fs from "node:fs";
 import path from "node:path";
 import { leerAreas, leerStaff, normMat, nombreCorto, type Persona, type RolId } from "./staff";
@@ -336,7 +337,7 @@ export async function espejar(): Promise<{ ok: boolean; mensaje: string }> {
     const hechas = tareas.filter((t) => t.estado === "hecha").slice(-25).reverse();
     if (hechas.length) {
       bloques.push(titulo2("Cerradas recientemente"));
-      for (const t of hechas) bloques.push(vinieta(`${t.titulo} (${quienes(t, staff)})${t.hechaEl ? " — " + t.hechaEl.slice(0, 10) : ""}`));
+      for (const t of hechas) bloques.push(vinieta(`${t.titulo} (${quienes(t, staff)})${t.hechaEl ? " — " + diaLocal(t.hechaEl) : ""}`));
     }
     bloques.push(titulo2("Equipo"));
     for (const a of areas) {

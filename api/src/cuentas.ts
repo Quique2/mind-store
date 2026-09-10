@@ -4,6 +4,7 @@
 // - Stripe EN VIVO (caché 10 min): cada cobro es un ingreso y su comisión un gasto.
 //   Evento y concepto de cada cobro se editan desde la página y se guardan en
 //   cuentas/stripe_conceptos.json (git, semilla) + /data/stripe_conceptos.json (disco).
+import { diaLocal } from "./fecha";
 import fs from "node:fs";
 import path from "node:path";
 import type Stripe from "stripe";
@@ -154,7 +155,7 @@ export async function movsStripe(stripe: Stripe | null): Promise<{ movs: Mov[]; 
           const bt = c.balance_transaction as Stripe.BalanceTransaction | null;
           return {
             id: c.id,
-            fecha: new Date(c.created * 1000).toISOString().slice(0, 10),
+            fecha: diaLocal(c.created * 1000),
             monto: c.amount / 100,
             comision: bt && typeof bt === "object" ? bt.fee / 100 : 0,
             quien: (c.billing_details?.name ?? c.billing_details?.email ?? "").trim(),

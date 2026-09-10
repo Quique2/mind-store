@@ -1,6 +1,7 @@
 // Panel ejecutivo de MIND: estado de cuenta + eventos + asistencia en gráficas,
 // y edición del catálogo (precios, altas, bajas, ocultar). Los números se
 // calculan aquí en el servidor; Chart.js solo los pinta en el navegador.
+import { diaLocal } from "./fecha";
 import { signo, EVENTO_INICIAL, type Mov } from "./cuentas";
 import { TIPOS, TIPOS_FIJOS, fechaBonita, esStaff, esJunta, nombreTipo, claveTipo,
          type Evento, type Asistencia, type Preregistro, type TipoId } from "./eventos";
@@ -71,7 +72,7 @@ export function calcular(d: DatosPanel) {
   // ventas = ingresos que no son capital inicial; gastos aparte (incluye comisiones Stripe)
   const ventas = d.movs.filter((m) => m.tipo === "ingreso" && m.evento !== EVENTO_INICIAL);
   const gastos = d.movs.filter((m) => m.tipo === "gasto");
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = diaLocal();
   const suma = (f: (m: Mov) => boolean) => d.movs.filter(f).reduce((s, m) => s + signo(m), 0);
   const total = suma(() => true);
   const metodos = {

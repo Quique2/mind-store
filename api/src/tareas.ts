@@ -1,5 +1,6 @@
 // Tareas de MIND: quién hace qué, para cuándo, y con qué evidencia.
 // Modelo y almacenamiento en el disco persistente (DATA_DIR), como todo lo demás.
+import { diaLocal } from "./fecha";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -69,7 +70,7 @@ export const sumarDias = (f: string, n: number) => {
   const d = aDate(f); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10);
 };
 export const lunesDe = (f: string) => sumarDias(f, -((aDate(f).getUTCDay() + 6) % 7));
-export const hoyISO = () => new Date().toLocaleDateString("sv-SE");
+export const hoyISO = () => diaLocal();
 export const semanaActual = () => lunesDe(hoyISO());
 const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
 export function rangoSemana(lunes: string): string {
@@ -107,7 +108,7 @@ export const limiteDe = (t: Tarea, fechaEvento?: string) =>
 export function hechaTarde(t: Tarea, fechaEvento?: string): boolean {
   if (t.estado !== "hecha" || !t.hechaEl) return false;
   const l = limiteDe(t, fechaEvento);
-  return Boolean(l && t.hechaEl.slice(0, 10) > l);
+  return Boolean(l && diaLocal(t.hechaEl) > l);
 }
 /** Las transversales no se acaban: se cumplen cada semana. */
 export const esRecurrente = (t: Tarea) => t.vigencia.tipo === "transversal";
@@ -204,7 +205,7 @@ export function cerrarSemana(arrastrar: string[], vencer: string[], por: string)
     if (arrastrar.includes(t.id)) { posponer(t); a++; }
     else if (vencer.includes(t.id)) { t.estado = "vencida"; t.cerradaEn = lunes; v++; }
   }
-  const hechas = l.filter((t) => t.estado === "hecha" && t.hechaEl && lunesDe(t.hechaEl.slice(0, 10)) === lunes).length;
+  const hechas = l.filter((t) => t.estado === "hecha" && t.hechaEl && lunesDe(diaLocal(t.hechaEl)) === lunes).length;
   guardarTareas(l);
   const s: Semana = { lunes, cerradaEl: new Date().toISOString(), por, arrastradas: a, vencidas: v, hechas };
   const ss = leerSemanas().filter((x) => x.lunes !== lunes);

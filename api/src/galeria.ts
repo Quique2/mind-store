@@ -1,6 +1,7 @@
 // Galería de MIND: fotos y videos de los eventos, subidos desde PC o celular al
 // disco persistente (/data/galeria), más enlaces de YouTube / Google Drive.
 // Ver es público (para compartir); subir y borrar requieren la clave.
+import { diaLocal, aDia } from "./fecha";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -168,12 +169,12 @@ export function renderGaleria(items: Item[], eventos: Evento[], clave: string | 
   ${mini(it)}
   <span class="tipo">${it.tipo === "foto" ? "📷" : it.tipo === "video" ? "🎬" : "🔗"}</span>
   ${admin ? `<form class="del" method="post" action="/galeria/borrar${q}" onclick="event.stopPropagation()" onsubmit="return confirm('¿Borrar este elemento de la galería?')"><input type="hidden" name="id" value="${esc(it.id)}"><button type="submit" title="Borrar">✕</button></form>` : ""}
-  <figcaption class="pie"><b>${esc(it.titulo || (e ? e.titulo : it.tipo === "enlace" ? "Enlace" : "Sin título"))}</b><small>${e ? esc(fechaBonita(e.fecha)) : esc(fechaBonita(it.creado.slice(0, 10)))}</small></figcaption>
+  <figcaption class="pie"><b>${esc(it.titulo || (e ? e.titulo : it.tipo === "enlace" ? "Enlace" : "Sin título"))}</b><small>${e ? esc(fechaBonita(e.fecha)) : esc(fechaBonita(diaLocal(it.creado)))}</small></figcaption>
 </figure>`;
   }).join("\n");
   const datos = visibles.map((it) => ({
     tipo: it.tipo, src: src(it), url: it.url ?? "", embed: Boolean(it.embed), titulo: it.titulo,
-    evento: evIdx.get(it.evento)?.titulo ?? "", fecha: fechaBonita((evIdx.get(it.evento)?.fecha ?? it.creado).slice(0, 10)),
+    evento: evIdx.get(it.evento)?.titulo ?? "", fecha: fechaBonita(aDia(evIdx.get(it.evento)?.fecha ?? it.creado)),
   }));
   const opcionesEv = (sel: string) => `<option value=""${sel === "" ? " selected" : ""}>Sin evento</option>` +
     evOrden.map((e) => `<option value="${esc(e.id)}"${e.id === sel ? " selected" : ""}>${esc(fechaBonita(e.fecha))} · ${esc(e.titulo)}</option>`).join("");

@@ -1,5 +1,6 @@
 // Pantallas del portal de tareas de MIND: entrada, calendario de cada quien,
 // tablero visual por área, lámina semanal, cierre de semana y equipo.
+import { diaLocal } from "./fecha";
 import { notasDe } from "./notas";
 import { ROLES, areaDe, esPresidencia, dirigeArea, nombreCorto, puedeAsignar, iniciales,
          type Area, type Persona, type RolId } from "./staff";
@@ -114,7 +115,7 @@ function tarjeta(t: Tarea, yo: Persona, areas: Area[], staff: Persona[], eventos
       ? `<a href="${esc(e.url ?? "")}" target="_blank" rel="noopener">🔗 ${esc(e.nombre)}</a>`
       : `<a href="/tareas/evidencia/${esc(e.archivo ?? "")}" target="_blank">📎 ${esc(e.nombre)}</a>`;
     return `<div class="evi-uno">${enlace}
-      <small>${quien ? esc(nombreCorto(quien)) : ""} · ${esc(fechaCorta(e.ts.slice(0, 10)))}</small>
+      <small>${quien ? esc(nombreCorto(quien)) : ""} · ${esc(fechaCorta(diaLocal(e.ts)))}</small>
       ${puedeQuitar ? `<form method="post" action="/tareas/evidencia/quitar" onsubmit="return confirm('¿Quitar «${esc(e.nombre)}» de esta tarea?')">${oculto}<button class="x" type="submit" title="Quitar">✕</button></form>${otras.length ? `<form method="post" action="/tareas/evidencia/mover" class="mover">${oculto}<select name="destinoId" onchange="if(this.value)this.form.submit()"><option value="">mover a…</option>${otras.slice(0, 40).map((x) => `<option value="${esc(x.id)}">${esc(x.titulo.slice(0, 60))}</option>`).join("")}</select></form>` : ""}` : ""}
     </div>`;
   }).join("");
@@ -171,7 +172,7 @@ function tarjeta(t: Tarea, yo: Persona, areas: Area[], staff: Persona[], eventos
     ${esRecurrente(t) && t.estado === "hecha" ? '<span class="tag repite">✓ esta semana · vuelve el lunes</span>' : ""}
     ${esRecurrente(t) && t.vueltas?.length ? `<span>· ${t.vueltas.length} semana${t.vueltas.length === 1 ? "" : "s"} cumplida${t.vueltas.length === 1 ? "" : "s"}</span>` : ""}
     <span>· ${esc(quienes(t, staff))}</span>
-    ${t.hechaEl ? `<span>· ${esRecurrente(t) ? "cumplida" : "hecha"} el ${esc(fechaCorta(t.hechaEl.slice(0, 10)))}</span>` : ""}</div>
+    ${t.hechaEl ? `<span>· ${esRecurrente(t) ? "cumplida" : "hecha"} el ${esc(fechaCorta(diaLocal(t.hechaEl)))}</span>` : ""}</div>
   ${evi ? `<div class="evid">${evi}</div>` : ""}
   ${acciones.length ? `<div class="acc">${acciones.join("")}</div>` : ""}
   ${formEvidencia}${formEditar}
@@ -202,7 +203,7 @@ function diasVisibles(t: Tarea, eventos: EventoLite[]): { ini: string; fin: stri
   if (v.tipo !== "fechas") return null;
   // ya hecha, deja de ocupar su rango: se queda solo en el día en que se cerró
   if (t.estado === "hecha" && t.hechaEl) {
-    const d = new Date(t.hechaEl).toLocaleDateString("sv-SE");
+    const d = diaLocal(t.hechaEl);
     return { ini: d, fin: d };
   }
   if (!v.inicio && !v.fin) return null;
@@ -970,7 +971,7 @@ export function renderEquipo(p: Persona, staff: Persona[], areas: Area[], aviso?
   <label class="cb"><input type="checkbox" name="admin"${s.admin ? " checked" : ""}${yo ? " disabled" : ""}> admin</label>
   <label class="cb"><input type="checkbox" name="activo"${s.activo ? " checked" : ""}${yo ? " disabled" : ""}> activo</label>
   <button class="btn sec mini" type="submit">Guardar</button></form></td>
-<td>${estado}${s.ultimoAcceso ? `<div class="det">entró ${esc(s.ultimoAcceso.slice(0, 10))}</div>` : ""}</td>
+<td>${estado}${s.ultimoAcceso ? `<div class="det">entró ${esc(diaLocal(s.ultimoAcceso))}</div>` : ""}</td>
 <td class="acc"><form method="post" action="/tareas/equipo/pin" onsubmit="return confirm('¿Generar un PIN nuevo para ${esc(s.nombre)}? El anterior deja de servir.')">
 <input type="hidden" name="matricula" value="${esc(s.matricula)}"><button class="btn sec mini" type="submit">Nuevo PIN</button></form></td></tr>`;
     }).join("");

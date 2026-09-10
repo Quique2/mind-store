@@ -11,6 +11,9 @@ RUN npm run build -w app && npm run build -w api
 FROM node:22-alpine
 WORKDIR /repo
 ENV NODE_ENV=production
+# hora de Monterrey para todo lo que depende del día: hoy, semanas, puntualidad, calendario
+RUN apk add --no-cache tzdata
+ENV TZ=America/Monterrey
 COPY --from=build /repo/package.json /repo/package-lock.json ./
 COPY --from=build /repo/api/package.json api/
 RUN npm ci --omit=dev -w api

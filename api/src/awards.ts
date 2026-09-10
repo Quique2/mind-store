@@ -1,5 +1,6 @@
 // MIND Awards: quién hace cuántas tareas, cuántas cumple y qué tanto se aparece.
 // Sale de lo que ya existe: tareas del portal + asistencia a eventos y juntas.
+import { diaLocal } from "./fecha";
 import { areaDe, iniciales, leerAreas, nombreCorto, puedeAsignar, ROLES, staffActivo,
          type Persona } from "./staff";
 import { leerTareas, esAbierta, esc, jsonSeguro, paginaPortal, hoyISO, semanaActual,
@@ -82,14 +83,14 @@ export const CATEGORIAS: Record<Orden, Categoria> = {
 };
 
 /** Fecha que "cuenta" para una tarea: cuándo se cerró, o cuándo nació. */
-const fechaDe = (t: Tarea) => (t.hechaEl ?? t.creada).slice(0, 10);
+const fechaDe = (t: Tarea) => diaLocal(t.hechaEl ?? t.creada);
 
 /** ¿La tarea se entregó antes de su límite? Con evento, antes del evento. */
 function aTiempo(t: Tarea, fechaEvento?: string): boolean {
   if (t.estado !== "hecha" || !t.hechaEl) return false;
   const limite = t.vigencia.tipo === "fechas" ? t.vigencia.fin
     : t.vigencia.tipo === "evento" ? fechaEvento : undefined;
-  return Boolean(limite) && t.hechaEl.slice(0, 10) <= limite!;
+  return Boolean(limite) && diaLocal(t.hechaEl) <= limite!;
 }
 
 export function calcularAwards(periodo: Periodo) {
@@ -102,7 +103,7 @@ export function calcularAwards(periodo: Periodo) {
   const eventos = leerEventos();
   const fechaEv = new Map(eventos.map((e) => [e.id, e.fecha]));
   const evIdx = new Map(eventos.map((e) => [e.id, e]));
-  const asis = leerAsistencias().filter((a) => a.ts.slice(0, 10) >= desde);
+  const asis = leerAsistencias().filter((a) => diaLocal(a.ts) >= desde);
   const previas = cierresConActual(desde);   // lo cerrado en las láminas viejas también cuenta
 
   const filas: FilaAward[] = staff.map((p) => {
