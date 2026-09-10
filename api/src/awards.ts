@@ -3,7 +3,7 @@
 import { areaDe, iniciales, leerAreas, nombreCorto, puedeAsignar, ROLES, staffActivo,
          type Persona } from "./staff";
 import { leerTareas, esAbierta, esc, jsonSeguro, paginaPortal, hoyISO, semanaActual,
-         esRecurrente, cumplidaEstaSemana, type Tarea } from "./tareas";
+         esRecurrente, cumplidaEstaSemana, hechaTarde, type Tarea } from "./tareas";
 import { leerAsistencias, leerEventos, esJunta } from "./eventos";
 import { navPortal } from "./portal";
 import { cierresConActual } from "./historial";
@@ -13,7 +13,7 @@ const PERIODOS: Record<Periodo, string> = {
   todo: "todo el semestre", mes: "este mes", semana: "esta semana",
 };
 
-export type Orden = "puntos" | "tareas" | "cumple" | "tiempo" | "juntas" | "eventos";
+export type Orden = "puntos" | "tareas" | "cumple" | "tiempo" | "transversales" | "juntas" | "eventos";
 /** Tareas mínimas para competir en Cumplimiento: sin esto, 1 de 1 sería un 100%. */
 const MIN_CUMPLE = 2;
 
@@ -27,6 +27,7 @@ export interface FilaAward {
   asignadas: number; hechas: number; pct: number; aTiempo: number;
   vueltas: number;   // veces que cumplió una tarea transversal (una por semana)
   previas: number;   // tareas que cerró en las láminas de semanas anteriores
+  tardias: number;   // cerradas después de su fecha; cuentan igual, pero se ven
   juntas: number; eventos: number; puntos: number;
   medallas: string[];
 }
@@ -60,7 +61,13 @@ export const CATEGORIAS: Record<Orden, Categoria> = {
   tiempo: {
     nombre: "Puntualidad", emoji: "⏱️", explica: "Tareas cerradas antes de su fecha o de su evento",
     valor: (x) => x.aTiempo, grande: (x) => `${x.aTiempo}`,
-    chico: (x) => `de ${x.hechas} cerrada${x.hechas === 1 ? "" : "s"} · solo cuentan las que tenían fecha`,
+    chico: (x) => `de ${x.hechas} cerrada${x.hechas === 1 ? "" : "s"}${x.tardias ? ` · ${x.tardias} fuera de fecha` : ""}`,
+  },
+  transversales: {
+    nombre: "Transversales", emoji: "🔁",
+    explica: "Tareas de siempre, las que vuelven cada lunes · cuenta cada semana que se cumplieron",
+    valor: (x) => x.vueltas, grande: (x) => `${x.vueltas}`,
+    chico: (x) => `semana${x.vueltas === 1 ? "" : "s"} cumplida${x.vueltas === 1 ? "" : "s"}`,
   },
   juntas: {
     nombre: "Juntas", emoji: "📋", explica: "A cuántas juntas de staff asistió",
@@ -111,6 +118,7 @@ export function calcularAwards(periodo: Periodo) {
     // el porcentaje mira el ahora: de lo que tienes, cuánto está cerrado
     const pctNum = hechasNoRec.length + rec.filter(cumplidaEstaSemana).length;
     const puntual = hechasNoRec.filter((t) => aTiempo(t, fechaEv.get(t.vigencia.evento ?? ""))).length;
+    const tardias = hechasNoRec.filter((t) => hechaTarde(t, fechaEv.get(t.vigencia.evento ?? ""))).length;
     const mias = asis.filter((a) => a.matricula === p.matricula);
     const juntas = mias.filter((a) => { const e = evIdx.get(a.evento); return e && esJunta(e); }).length;
     const evs = mias.length - juntas;
@@ -119,7 +127,7 @@ export function calcularAwards(periodo: Periodo) {
     return {
       matricula: p.matricula, nombre: p.nombre, apodo: nombreCorto(p), ini: iniciales(p),
       area: a.nombre, color: a.color, rol: ROLES[p.rol].nombre,
-      asignadas: suyas.length + prev, hechas: cerradas + prev, vueltas, previas: prev,
+      asignadas: suyas.length + prev, hechas: cerradas + prev, vueltas, previas: prev, tardias,
       pct: suyas.length + prev ? Math.round(100 * (pctNum + prev) / (suyas.length + prev)) : 0,
       aTiempo: puntual, juntas, eventos: evs,
       puntos: (cerradas + prev) * PESOS.tarea + puntual * PESOS.puntual

@@ -393,7 +393,7 @@ export function renderResultado(ev: Evento, tipo: "ok" | "duplicado" | "cerrado"
 .grande{font-size:26px;font-weight:800;margin:6px 0 10px}</style></head><body>
 <header><p>${t.emoji} ${esc(nombreTipo(ev))}</p><h1>${esc(ev.titulo)}</h1></header>
 <main><div class="tarjeta"><div class="grande">${msg.h}</div><p>${msg.p}</p>
-<p style="margin-top:14px;font-size:13px;color:#6A6F98">Síguenos: <a href="https://quique2.github.io/mind/" style="color:#2E4BC6;font-weight:600">enlaces de MIND</a></p></div>${PUNTOS}</main></body></html>`;
+<p style="margin-top:14px;font-size:13px;color:#6A6F98">Síguenos: <a href="/enlaces" style="color:#2E4BC6;font-weight:600">enlaces de MIND</a></p></div>${PUNTOS}</main></body></html>`;
 }
 
 // ---------------- prerregistro público ----------------
@@ -450,7 +450,7 @@ export function renderResultadoPre(ev: Evento, tipo: "ok" | "duplicado", nombre:
 ${detallesEv(ev)}
 <a class="btn" href="${esc(calendarioURL(ev))}" target="_blank" rel="noopener">📅 Agregar a mi calendario</a>
 <p style="margin-top:14px;font-size:13px;color:#6A6F98">El día del evento te pediremos tu matrícula otra vez para registrar tu asistencia.<br>
-Síguenos: <a href="https://quique2.github.io/mind/" style="color:#2E4BC6;font-weight:600">enlaces de MIND</a></p></div>${PUNTOS}</main></body></html>`;
+Síguenos: <a href="/enlaces" style="color:#2E4BC6;font-weight:600">enlaces de MIND</a></p></div>${PUNTOS}</main></body></html>`;
 }
 
 // ---------------- panel admin (pestañas Eventos y Juntas) ----------------

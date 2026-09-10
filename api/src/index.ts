@@ -28,6 +28,10 @@ import { leerTareas, guardarTareas, crearTarea, conId, actualizar, borrarTarea, 
          nuevoId as nuevoIdTarea, type Tarea, type EstadoTarea } from "./tareas";
 import { renderEntrar, renderElegirPin, renderYo, renderTablero, renderTableroLista, renderLamina,
          renderCerrarSemana, renderEquipo } from "./portal";
+import { crearNota, notaConId, puedeTocarNota, actualizarNota, borrarNota, comoTarea } from "./notas";
+import { leerEnlaces, crearEnlace, editarEnlace, alternarEnlace, moverEnlace, borrarEnlace, urlSegura,
+         renderEnlacesPublico, renderEnlacesAdmin, renderBorrarEnlace } from "./enlaces";
+import { renderCarga } from "./carga";
 import { conClave } from "./ui";
 import { renderHistorial, leerTableros, guardarTablero, fotoActual } from "./historial";
 import { renderAwards, calcularAwards, CATEGORIAS, PESOS, type Periodo, type Orden } from "./awards";
@@ -295,6 +299,82 @@ app.use("/galeria/archivo", (req, res, next) => {
   if (!nombreSeguro(req.path.slice(1))) return res.status(404).end();
   next();
 }, express.static(DIR_GALERIA, { maxAge: "30d", immutable: true, index: false }));
+
+// ---- linktree de MIND: la pagina publica y su administracion ----
+app.get("/enlaces", (_req, res) => {
+  res.type("html").send(renderEnlacesPublico(leerEnlaces()));
+});
+
+app.get("/admin/enlaces", (req, res) => {
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
+  const l = leerEnlaces();
+  const ed = l.find((e) => e.id === String(req.query.editar ?? ""));
+  res.type("html").send(renderEnlacesAdmin(l, claveDe(req), avisoDe(req), undefined, ed));
+});
+
+const formEnlace = express.urlencoded({ extended: false });
+const aEnlaces = (req: express.Request, aviso: string) =>
+  volverPortal(`/admin/enlaces${conClave(claveDe(req))}`, aviso);
+const datosEnlace = (req: express.Request) => {
+  const b = req.body as Record<string, unknown>;
+  const txt = (k: string, tope: number) => String(b[k] ?? "").trim().slice(0, tope);
+  return { titulo: txt("titulo", 80), sub: txt("sub", 80), url: txt("url", 400), emoji: txt("emoji", 4) };
+};
+const malEnlace = (req: express.Request, res: express.Response, motivo: string) =>
+  res.status(400).type("html").send(renderEnlacesAdmin(leerEnlaces(), claveDe(req), undefined, motivo));
+
+app.post("/admin/enlaces/nuevo", formEnlace, (req, res) => {
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente.");
+  const d = datosEnlace(req);
+  if (d.titulo.length < 2) return malEnlace(req, res, "Ponle un titulo al enlace.");
+  if (!urlSegura(d.url)) return malEnlace(req, res, "El enlace tiene que empezar con https:// o con / (una ruta de esta misma pagina).");
+  const e = crearEnlace(d);
+  res.redirect(aEnlaces(req, `\u2713 Agregado: ${e.titulo}`));
+});
+
+app.post("/admin/enlaces/editar", formEnlace, (req, res) => {
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente.");
+  const d = datosEnlace(req);
+  if (d.titulo.length < 2) return malEnlace(req, res, "Ponle un titulo al enlace.");
+  if (!urlSegura(d.url)) return malEnlace(req, res, "El enlace tiene que empezar con https:// o con / (una ruta de esta misma pagina).");
+  const e = editarEnlace(String((req.body as Record<string, unknown>).id ?? ""), d);
+  if (!e) return malEnlace(req, res, "Ese enlace ya no existe.");
+  res.redirect(aEnlaces(req, `\u2713 Guardado: ${e.titulo}`));
+});
+
+app.post("/admin/enlaces/mover", formEnlace, (req, res) => {
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente.");
+  const b = req.body as Record<string, unknown>;
+  const e = moverEnlace(String(b.id ?? ""), String(b.dir) === "-1" ? -1 : 1);
+  if (!e) return malEnlace(req, res, "Ese enlace ya no existe.");
+  res.redirect(aEnlaces(req, `\u2713 Se movio: ${e.titulo}`));
+});
+
+app.post("/admin/enlaces/alternar", formEnlace, (req, res) => {
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente.");
+  const e = alternarEnlace(String((req.body as Record<string, unknown>).id ?? ""));
+  if (!e) return malEnlace(req, res, "Ese enlace ya no existe.");
+  res.redirect(aEnlaces(req, e.activo ? `\u2713 Se ve otra vez: ${e.titulo}` : `Se escondio: ${e.titulo}`));
+});
+
+// borrar pide confirmacion antes, como los eventos
+app.get("/admin/enlaces/borrar", (req, res) => {
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
+  const e = leerEnlaces().find((x) => x.id === String(req.query.id ?? ""));
+  if (!e) return res.redirect(aEnlaces(req, "Ese enlace ya no existe."));
+  res.type("html").send(renderBorrarEnlace(e, claveDe(req)));
+});
+app.post("/admin/enlaces/borrar", formEnlace, (req, res) => {
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente.");
+  const e = borrarEnlace(String((req.body as Record<string, unknown>).id ?? ""));
+  if (!e) return malEnlace(req, res, "Ese enlace ya no existe.");
+  res.redirect(aEnlaces(req, `Se borro: ${e.titulo}`));
+});
 
 app.get("/galeria", (req, res) => {
   const clave = acceso(req) ? claveDe(req) : null;
@@ -1025,6 +1105,13 @@ app.get("/admin/awards.json", (req, res) => {
   res.json({ pesos: PESOS, ...calcularAwards(periodo) });
 });
 
+app.get("/tareas/carga", (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  if (!puedeAsignar(p, leerAreas())) return res.redirect("/portal");
+  res.type("html").send(renderCarga(p, eventosLite()));
+});
+
 app.get("/tareas/awards", (req, res) => {
   const p = exigeSesion(req, res);
   if (!p) return;
@@ -1295,6 +1382,70 @@ const PatchSchema = z.object({
   estado: z.enum(["pendiente", "curso", "hecha", "vencida"]).optional(),
   vigencia: VigenciaSchema.optional(),
   posponer: z.boolean().optional(),
+});
+
+// ---- notas sueltas: pendientes que todavia no son tareas de nadie ----
+const notaJSON = (n: { id: string; texto: string; ambito: string; de: string }, puedo: boolean) =>
+  ({ id: n.id, texto: n.texto, ambito: n.ambito, de: n.de, puedo });
+
+app.post("/api/notas", (req, res) => {
+  const p = jsonSesion(req, res);
+  if (!p) return;
+  const parsed = z.object({ texto: z.string().trim().min(3).max(200),
+                            ambito: z.enum(["general", "mia"]) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "La nota necesita al menos tres letras." });
+  if (!hayDiscoPersistente()) return res.status(503).json({ error: "No hay disco persistente." });
+  const n = crearNota({ texto: parsed.data.texto, ambito: parsed.data.ambito, de: p.matricula });
+  res.json(notaJSON(n, true));
+});
+
+app.patch("/api/notas/:id", (req, res) => {
+  const p = jsonSesion(req, res);
+  if (!p) return;
+  const n = notaConId(String(req.params.id));
+  if (!n || n.usada) return res.status(404).json({ error: "Esa nota ya no esta." });
+  if (!puedeTocarNota(n, p.matricula, esPresidencia(p))) return res.status(403).json({ error: "Esa nota no es tuya." });
+  const parsed = z.object({ texto: z.string().trim().min(3).max(200).optional(),
+                            ambito: z.enum(["general", "mia"]).optional() }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Datos invalidos." });
+  const out = actualizarNota(n.id, (x) => {
+    if (parsed.data.texto) x.texto = parsed.data.texto;
+    if (parsed.data.ambito) x.ambito = parsed.data.ambito;
+  });
+  if (!out) return res.status(404).json({ error: "Esa nota ya no esta." });
+  res.json(notaJSON(out, true));
+});
+
+app.delete("/api/notas/:id", (req, res) => {
+  const p = jsonSesion(req, res);
+  if (!p) return;
+  const n = notaConId(String(req.params.id));
+  if (!n) return res.status(404).json({ error: "Esa nota ya no esta." });
+  if (!puedeTocarNota(n, p.matricula, esPresidencia(p))) return res.status(403).json({ error: "Esa nota no es tuya." });
+  borrarNota(n.id);
+  res.json({ ok: true });
+});
+
+// la nota se vuelve tarea de verdad al soltarla en una columna del tablero
+app.post("/api/notas/:id/a-tarea", (req, res) => {
+  const p = jsonSesion(req, res);
+  if (!p) return;
+  const n = notaConId(String(req.params.id));
+  if (!n || n.usada) return res.status(404).json({ error: "Esa nota ya no esta." });
+  if (!puedeTocarNota(n, p.matricula, esPresidencia(p))) return res.status(403).json({ error: "Esa nota no es tuya." });
+  const parsed = z.object({ area: z.string().max(40) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Falta el area." });
+  const areas = leerAreas();
+  if (!areas.some((a) => a.id === parsed.data.area)) return res.status(400).json({ error: "Esa area no existe." });
+  if (!dirigeArea(p, parsed.data.area, areas)) return res.status(403).json({ error: "No puedes crear tareas en esa area." });
+  if (!hayDiscoPersistente()) return res.status(503).json({ error: "No hay disco persistente." });
+  const { titulo, detalle } = comoTarea(n);
+  const t = crearTarea({ titulo, detalle, area: parsed.data.area, asignados: [],
+                         vigencia: { tipo: "fechas", inicio: hoyISO(), fin: sumarDias(semanaActual(), 6) },
+                         creadaPor: p.matricula, origen: "nota" });
+  actualizarNota(n.id, (x) => { x.usada = new Date().toISOString(); x.tareaId = t.id; });
+  espejarPronto();
+  res.json({ tarea: tareaJSON(t) });
 });
 
 app.post("/api/tareas", (req, res) => {

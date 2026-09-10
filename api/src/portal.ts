@@ -1,5 +1,6 @@
 // Pantallas del portal de tareas de MIND: entrada, calendario de cada quien,
 // tablero visual por área, lámina semanal, cierre de semana y equipo.
+import { notasDe } from "./notas";
 import { ROLES, areaDe, esPresidencia, dirigeArea, nombreCorto, puedeAsignar, iniciales,
          type Area, type Persona, type RolId } from "./staff";
 import { ESTADOS, atrasada, badgeArea, badgeEstado, cuando, esAbierta, esc, fechaCorta, hoyISO,
@@ -19,7 +20,7 @@ export function navPortal(p: Persona, actual: string, puede: boolean): string {
   const t: [string, string, string][] = [["yo", "/portal", "🙋 Mis tareas"]];
   if (puede) t.push(["tablero", "/tareas", "🗂️ Tablero"], ["semana", "/tareas/semana", "🖼️ Lámina"]);
   t.push(["awards", "/tareas/awards", "🏆 Awards"]);
-  if (puede) t.push(["historial", "/tareas/historial", "📚 Historial"]);
+  if (puede) t.push(["historial", "/tareas/historial", "📚 Historial"], ["carga", "/tareas/carga", "⚖️ Carga"]);
   if (esPresidencia(p)) t.push(["equipo", "/tareas/equipo", "👥 Equipo"]);
   const admin = esPresidencia(p)
     ? `<span class="sep"></span><a href="/admin?via=portal">📊 Panel</a><a href="/cuentas?via=portal">💰 Cuentas</a><a href="/eventos?via=portal">🎟️ Eventos</a><a href="/galeria?via=portal">🖼️ Galería</a>`
@@ -469,13 +470,29 @@ export function renderTablero(p: Persona, todas: Tarea[], areas: Area[], staff: 
                                 vigencia: t.vigencia, estado: t.estado, evidencia: t.evidencia.length,
                                 atrasada: atrasada(t) })),
     estados: ESTADOS, hoy: hoyISO(), finSemana: sumarDias(semanaActual(), 6),
+    notas: notasDe(p.matricula).map((n) => ({ id: n.id, texto: n.texto, ambito: n.ambito, de: n.de,
+      puedo: n.de === p.matricula || (n.ambito === "general" && puedeTodo) })),
   };
   const cuerpo = `
 ${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
 <div class="vistas"><a class="actual" href="/tareas">🗂️ Tablero</a><a href="/tareas/lista">📋 Lista</a>${puedeTodo ? `<a href="/tareas/cerrar-semana">🗓️ Cerrar la semana</a>` : ""}<label class="cambio"><input type="checkbox" id="ver-hechas"> ver hechas</label></div>
 <div class="pool" id="pool"></div>
 <p class="ayuda" id="ayuda">Arrastra una persona a una tarea para asignarla. En celular: toca la persona y luego la tarea. Toca de nuevo para soltar.</p>
-<div class="tablero" id="tablero"></div>
+<div class="zona">
+  <div class="tablero" id="tablero"></div>
+  <aside class="notas" id="panel-notas">
+    <div class="notas-cab"><h3>📝 Notas</h3><button type="button" class="plegar" id="plegar-notas" title="Ocultar">–</button></div>
+    <div class="notas-cuerpo" id="notas-cuerpo">
+      <div class="notas-tabs" id="notas-tabs">
+        <button type="button" data-amb="general" class="actual">Del grupo</button>
+        <button type="button" data-amb="mia">M\u00edas</button>
+      </div>
+      <form id="f-nota"><input name="texto" placeholder="+ apunta un pendiente" maxlength="200" autocomplete="off"></form>
+      <div class="notas-lista" id="notas-lista"></div>
+      <p class="notas-pie" id="notas-pie">Arrastra una nota a una columna para volverla tarea.</p>
+    </div>
+  </aside>
+</div>
 <div id="hoja" class="hoja" hidden><div class="hoja-caja"><button class="cerrar" type="button" onclick="cerrarHoja()">✕</button><div id="hoja-cuerpo"></div></div></div>
 <div id="aviso-flotante" class="flotante" hidden></div>
 <script>
@@ -544,7 +561,7 @@ function pinta() {
   $('#tablero').innerHTML = cols.map((a) => {
     const suyas = S.tareas.filter((t) => (t.area || '') === a.id && (verHechas || (t.estado === 'pendiente' || t.estado === 'curso')));
     if (!a.id && !suyas.length) return '';
-    return '<section class="col" data-area="' + esc(a.id) + '"><h3><span class="punto" style="background:' + a.color + '"></span>' + esc(a.emoji + ' ' + a.nombre) + ' <small>' + suyas.length + '</small></h3>' +
+    return '<section class="col' + (notaSel && a.id && puedo(a.id) ? ' recibe' : '') + '" data-area="' + esc(a.id) + '"><h3><span class="punto" style="background:' + a.color + '"></span>' + esc(a.emoji + ' ' + a.nombre) + ' <small>' + suyas.length + '</small></h3>' +
       '<div class="cards">' + suyas.map(tarjetaHTML).join('') + '</div>' +
       (puedo(a.id) && a.id ? '<form class="rapida" data-area="' + esc(a.id) + '"><input name="titulo" placeholder="+ nueva tarea" maxlength="120" autocomplete="off"></form>' : '') +
       '</section>';
@@ -575,9 +592,12 @@ function pinta() {
   });
   // columnas: soltar tarjeta = cambiar de área
   document.querySelectorAll('.col').forEach((col) => {
-    col.addEventListener('dragover', (e) => { if (arrastrando && arrastrando.tipo === 'tarea') { e.preventDefault(); col.classList.add('sobre'); } });
+    col.addEventListener('dragover', (e) => { if (arrastrando && (arrastrando.tipo === 'tarea' || arrastrando.tipo === 'nota')) { e.preventDefault(); col.classList.add('sobre'); } });
     col.addEventListener('dragleave', (e) => { if (!col.contains(e.relatedTarget)) col.classList.remove('sobre'); });
-    col.addEventListener('drop', (e) => { const d = (e.dataTransfer.getData('text/plain') || ''); col.classList.remove('sobre'); if (!d.startsWith('tarea:')) return; e.preventDefault();
+    col.addEventListener('click', (e) => { if (!notaSel) return; if (e.target.closest('.card') || e.target.closest('.rapida')) return; notaATarea(notaSel, col.dataset.area); });
+    col.addEventListener('drop', (e) => { const d = (e.dataTransfer.getData('text/plain') || ''); col.classList.remove('sobre');
+      if (d.startsWith('nota:')) { e.preventDefault(); e.stopPropagation(); notaATarea(d.slice(5), col.dataset.area); return; }
+      if (!d.startsWith('tarea:')) return; e.preventDefault();
       const id = d.slice(6); const t = S.tareas.find((x) => x.id === id); const destino = col.dataset.area;
       if (!t || t.area === destino) return; if (!destino) { avisa('Arrastra a un área con nombre.', true); return; }
       cambia(id, { area: destino }, 'Movida a ' + area(destino).nombre); });
@@ -624,7 +644,64 @@ function cerrarHoja() { $('#hoja').hidden = true; document.body.style.overflow =
 $('#hoja').addEventListener('click', (e) => { if (e.target.id === 'hoja') cerrarHoja(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { cerrarHoja(); if (sel) { sel = null; pintaPool(); pinta(); } } });
 $('#ver-hechas').addEventListener('change', pinta);
-pintaPool(); pinta();
+
+// ---- notas sueltas ----
+let ambNota = 'general';
+let notaSel = null;
+function pintaNotas() {
+  const lista = S.notas.filter((n) => n.ambito === ambNota);
+  document.querySelectorAll('#notas-tabs button').forEach((b) => b.classList.toggle('actual', b.dataset.amb === ambNota));
+  $('#notas-lista').innerHTML = lista.length ? lista.map((n) => {
+    const q = persona(n.de);
+    return '<article class="nota' + (notaSel === n.id ? ' sel' : '') + '" draggable="true" data-id="' + esc(n.id) + '">' +
+      '<div class="nota-txt">' + esc(n.texto) + '</div>' +
+      '<div class="nota-pie">' + (ambNota === 'general' && q ? '<span>' + esc(q.apodo) + '</span>' : '<span>solo t\u00fa la ves</span>') +
+      (n.puedo ? '<button type="button" class="x" data-borrar="' + esc(n.id) + '" title="Borrar">✕</button>' : '') + '</div></article>';
+  }).join('') : '<p class="notas-vacio">' + (ambNota === 'general' ? 'No hay notas del grupo.' : 'Aqu\u00ed puedes apuntar lo tuyo sin asignarlo a nadie.') + '</p>';
+  $('#notas-lista').querySelectorAll('.nota').forEach((el) => {
+    const id = el.dataset.id;
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-borrar]');
+      if (b) { e.stopPropagation(); quitaNota(b.dataset.borrar); return; }
+      notaSel = notaSel === id ? null : id;
+      pintaNotas(); pinta();
+      $('#notas-pie').textContent = notaSel ? 'Ahora toca el \u00e1rea del tablero donde quieres esa tarea.' : 'Arrastra una nota a una columna para volverla tarea.';
+    });
+    el.addEventListener('dragstart', (ev) => { arrastrando = { tipo: 'nota', valor: id }; ev.dataTransfer.effectAllowed = 'copy'; ev.dataTransfer.setData('text/plain', 'nota:' + id); el.classList.add('llevando'); });
+    el.addEventListener('dragend', () => { arrastrando = null; el.classList.remove('llevando'); });
+  });
+}
+async function quitaNota(id) {
+  const n = S.notas.find((x) => x.id === id); if (!n) return;
+  if (!confirm('¿Borrar esta nota?')) return;
+  try { await api('DELETE', '/api/notas/' + id); S.notas = S.notas.filter((x) => x.id !== id); if (notaSel === id) notaSel = null; pintaNotas(); avisa('Nota borrada'); }
+  catch (e) { avisa(e.message, true); }
+}
+async function notaATarea(id, areaId) {
+  if (!areaId) { avisa('Su\u00e9ltala en un \u00e1rea con nombre.', true); return; }
+  if (!puedo(areaId)) { avisa('No puedes crear tareas en ' + (area(areaId) ? area(areaId).nombre : 'esa \u00e1rea') + '.', true); return; }
+  try {
+    const r = await api('POST', '/api/notas/' + id + '/a-tarea', { area: areaId });
+    S.tareas.push(r.tarea);
+    S.notas = S.notas.filter((x) => x.id !== id);
+    notaSel = null;
+    pinta(); pintaNotas();
+    avisa('✓ Ya es tarea en ' + area(areaId).nombre);
+  } catch (e) { avisa(e.message, true); }
+}
+$('#f-nota').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const inp = e.target.querySelector('input'); const texto = inp.value.trim();
+  if (texto.length < 3) { avisa('Escribe al menos tres letras.', true); return; }
+  try { const n = await api('POST', '/api/notas', { texto, ambito: ambNota }); S.notas.unshift(n); inp.value = ''; pintaNotas(); avisa('✓ Nota guardada'); }
+  catch (err) { avisa(err.message, true); }
+});
+document.querySelectorAll('#notas-tabs button').forEach((b) => b.addEventListener('click', () => { ambNota = b.dataset.amb; notaSel = null; pintaNotas(); pinta(); }));
+$('#plegar-notas').addEventListener('click', () => {
+  const c = $('#notas-cuerpo'); c.hidden = !c.hidden;
+  $('#plegar-notas').textContent = c.hidden ? '+' : '\u2013';
+});
+pintaPool(); pinta(); pintaNotas();
 </script>`;
   return paginaPortal("Tablero · MIND",
     cabecera(p, "tablero", "Tablero de tareas", `${todas.filter(esAbierta).length} abiertas · semana del ${rangoSemana(semanaActual())}`),
@@ -632,6 +709,30 @@ pintaPool(); pinta();
 }
 const CSS_KANBAN = `
 main { max-width:1400px; }
+.zona { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:14px; align-items:start; }
+@media (max-width:1050px) { .zona { grid-template-columns:minmax(0,1fr); } }
+.notas { background:#fff; border:1px solid #E4E1D2; border-radius:14px; padding:12px 13px; position:sticky; top:74px; }
+.notas-cab { display:flex; align-items:center; gap:8px; }
+.notas-cab h3 { font-size:12.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; margin:0; flex:1; }
+.plegar { font:inherit; font-size:15px; font-weight:800; line-height:1; width:24px; height:24px; border:1px solid #DDD9C6; background:#FCFBF5; color:#6A6F98; border-radius:8px; cursor:pointer; }
+.notas-tabs { display:flex; gap:5px; margin:10px 0 9px; }
+.notas-tabs button { flex:1; font:inherit; font-size:11.5px; font-weight:700; padding:5px 6px; border-radius:9px; border:1px solid #DDD9C6; background:#FCFBF5; color:#6A6F98; cursor:pointer; }
+.notas-tabs button.actual { background:#2E4BC6; border-color:#2E4BC6; color:#fff; }
+#f-nota input { width:100%; font:inherit; font-size:13px; padding:8px 10px; border:1.5px solid #DDD9C6; border-radius:10px; background:#FCFBF5; color:#1C2260; }
+#f-nota input:focus { outline:none; border-color:#2E4BC6; }
+.notas-lista { display:flex; flex-direction:column; gap:7px; margin-top:9px; max-height:52vh; overflow-y:auto; }
+.nota { background:#FFFBEA; border:1px solid #F0E4B4; border-left:4px solid #F5C518; border-radius:10px; padding:8px 10px; cursor:grab; }
+.nota:hover { border-color:#E8C64A; }
+.nota.sel { background:#FFF3C4; border-color:#F5C518; box-shadow:0 0 0 2px rgba(245,197,24,.35); }
+.nota.llevando { opacity:.45; }
+.nota-txt { font-size:13px; line-height:1.4; color:#1C2260; overflow-wrap:anywhere; }
+.nota-pie { display:flex; align-items:center; gap:6px; margin-top:5px; font-size:10.5px; color:#9A8A50; }
+.nota-pie span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.nota-pie .x { font:inherit; font-size:11px; line-height:1; border:0; background:transparent; color:#B9A96A; cursor:pointer; padding:2px 3px; }
+.nota-pie .x:hover { color:#C2255C; }
+.notas-vacio { font-size:12px; color:#8A8FB5; margin:4px 0; }
+.notas-pie { font-size:11px; color:#8A8FB5; margin:9px 0 0; line-height:1.4; }
+.col.recibe { outline:2px dashed #F5C518; outline-offset:2px; }
 .cambio { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:600; color:#6A6F98; margin-left:auto; text-transform:none; letter-spacing:0; }
 .cambio input { width:16px; height:16px; min-height:0; }
 .pool { display:flex; flex-wrap:wrap; gap:6px; background:#fff; border:1px solid #E4E1D2; border-radius:14px; padding:10px; position:sticky; top:0; z-index:5; }

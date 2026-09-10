@@ -9,12 +9,13 @@ export const NAV_CSS = `
 .nav-admin a.actual, .nav-admin a.actual:hover { background:#fff; color:#1C2260; }
 `;
 
-export function navAdmin(clave: string, actual: "panel" | "cuentas" | "eventos"): string {
+export function navAdmin(clave: string, actual: "panel" | "cuentas" | "eventos" | "enlaces"): string {
   const q = conClave(clave);
   const enlaces: [typeof actual, string, string][] = [
     ["panel", "/admin", "📊 Panel"],
     ["cuentas", "/cuentas", "💰 Cuentas"],
     ["eventos", "/eventos", "🎟️ Eventos"],
+    ["enlaces", "/admin/enlaces", "🔗 Enlaces"],
   ];
   return `<nav class="nav-admin">${enlaces.map(([k, href, txt]) =>
     `<a href="${href}${q}"${k === actual ? ' class="actual"' : ""}>${txt}</a>`).join("")
@@ -39,6 +40,7 @@ export function tabsEventos(clave: string | null, actual: "eventos" | "galeria" 
 }
 
 // enlaces públicos de MIND (los mismos que usa la página de enlaces)
-export const LINKTREE = "https://quique2.github.io/mind/";
+// el linktree ahora lo servimos nosotros desde /enlaces, para poder editarlo sin tocar codigo
+export const LINKTREE = "/enlaces";
 export const INSTAGRAM = "https://instagram.com/mindmty";
 export const WHATSAPP_GRUPO = "https://chat.whatsapp.com/JCP0jVXXtV7GHWBcrnv7wp";
