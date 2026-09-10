@@ -142,7 +142,7 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   `eventosLite()` en index.ts es quien manda tipo, color, emoji, hora, lugar y prereg al portal.
 - **Mis tareas** (continúa): calendario mensual con barras por rango, banda
   «Siempre» para transversales y hoja inferior con acciones; pestaña Lista secundaria.
-- **MIND Awards** (`api/src/awards.ts`, `/tareas/awards?periodo=todo|mes|semana`): ranking que
+- **MIND Awards** (`api/src/awards.ts`, `/tareas/awards?periodo=todo|mes|semana&orden=puntos|tareas|cumple|tiempo|juntas|eventos`): ranking que
   cruza tareas hechas, puntualidad y asistencia a eventos y juntas. Puntos: 10 por tarea hecha,
   +3 si se cerró antes de su fecha o de su evento, 5 por junta y 8 por evento; nada resta. Las
   tareas de TODOS no suman a nadie. Medallas por categoría (empates comparten). Lo ve todo el
