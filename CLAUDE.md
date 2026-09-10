@@ -123,6 +123,21 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
 - Rutas: `/portal` (entrar y mis tareas), `/tareas` (tablero, solo quien asigna),
   `/tareas/semana` (lámina en canvas, PNG descargable), `/tareas/cerrar-semana`
   (arrastrar o vencer), `/tareas/equipo` (presidencia: PIN y directores).
+- **Una sola lista de staff** (`staff.json`): Eventos/Juntas toman de ahí el roster para pasar
+  lista y muestran a TODO el staff en el ranking aunque tenga cero; quien es staff activo
+  queda como staff al registrarse aunque marque «vengo al evento». Equipo edita área/rol/
+  admin/activo (a uno mismo solo el área), da de alta con PIN y crea/borra áreas (sus tareas
+  y personas quedan «sin área», no se pierden).
+- **Acceso unificado**: `acceso(req)` = clave `?clave=` O sesión del portal de nivel
+  presidencia. Los enlaces se arman con `conClave(clave)` → `?clave=X` o `?via=portal`
+  (así los `&id=` concatenados siguen funcionando). `claveDe(req)` devuelve "" en modo sesión.
+- **Tablero visual** (`/tareas`): kanban por área con pool de fichas arrastrables (tap para
+  celular), alta rápida por columna, mover entre columnas = cambiar área, hoja de detalle.
+  Todo vía API JSON con sesión: `POST /api/tareas`, `PATCH /api/tareas/:id` (titulo, detalle,
+  area, asignados, estado, vigencia, posponer), `DELETE /api/tareas/:id`. `/tareas/lista` es
+  la vista de lista con formularios completos (evidencia).
+- **Mis tareas** (`/portal?mes=YYYY-MM`): calendario mensual con barras por rango, banda
+  «Siempre» para transversales y hoja inferior con acciones; pestaña Lista secundaria.
 - Notion (`api/src/notion.ts`, token en `NOTION_TOKEN`): `POST /admin/notion/importar`
   con `modo=aplicar` trae Directorio, tareas abiertas y agenda futura del semestre
   AD 2026; sin `modo=aplicar` es un ENSAYO que no escribe nada. El espejo vive en una

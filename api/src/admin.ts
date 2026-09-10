@@ -5,7 +5,7 @@ import { signo, EVENTO_INICIAL, type Mov } from "./cuentas";
 import { TIPOS, TIPOS_FIJOS, fechaBonita, esStaff, esJunta, nombreTipo, claveTipo,
          type Evento, type Asistencia, type Preregistro, type TipoId } from "./eventos";
 import type { Product } from "./products";
-import { NAV_CSS, navAdmin, LINKTREE, INSTAGRAM, WHATSAPP_GRUPO } from "./ui";
+import { NAV_CSS, navAdmin, conClave, LINKTREE, INSTAGRAM, WHATSAPP_GRUPO } from "./ui";
 import { resumenTareas } from "./tareas";
 import { estadoEspejo, notionActivo } from "./notion";
 
@@ -316,7 +316,7 @@ export function renderPanel(d: DatosPanel): string {
   const r = calcular(d);
   const tar = resumenTareas();
   const espejo = estadoEspejo();
-  const q = `?clave=${encodeURIComponent(d.clave)}`;
+  const q = conClave(d.clave);
   const clase = (m: Mov) => (["efectivo", "revolut", "spei", "stripe"].includes(m.metodo) ? m.metodo : "otro");
   const conteo = new Map<string, number>();
   for (const a of d.asistencias) if (!esStaff(a)) conteo.set(a.evento, (conteo.get(a.evento) ?? 0) + 1);

@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type Stripe from "stripe";
 import type { Product } from "./products";
-import { NAV_CSS, navAdmin } from "./ui";
+import { NAV_CSS, navAdmin, conClave } from "./ui";
 
 export type TipoMov = "ingreso" | "gasto";
 export interface Mov {
@@ -197,7 +197,7 @@ const GASTOS_RAPIDOS = ["Filamento", "Insumos / material", "Comida", "Transporte
 
 export function renderCuentas(movs: Mov[], stripeOk: boolean, clave: string, aviso: string | undefined,
                               productos: Product[], eventosRegistrados: string[]): string {
-  const q = `?clave=${encodeURIComponent(clave)}`;
+  const q = conClave(clave);
   const orden = [...movs].sort((a, b) => (a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0));
   const suma = (f: (m: Mov) => boolean) => movs.filter(f).reduce((s, m) => s + signo(m), 0);
   const efectivo = suma((m) => m.metodo === "efectivo");

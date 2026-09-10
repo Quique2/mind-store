@@ -1,4 +1,7 @@
 // Piezas de interfaz compartidas por las páginas de administración.
+/** Enlace con la clave si la hay; si no, marca de sesión del portal (la cookie autentica). */
+export const conClave = (clave: string) => (clave ? `?clave=${encodeURIComponent(clave)}` : "?via=portal");
+export const yClave = (clave: string) => (clave ? `&clave=${encodeURIComponent(clave)}` : "");
 export const NAV_CSS = `
 .nav-admin { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
 .nav-admin a { font-size:12px; font-weight:700; color:#fff; text-decoration:none; background:rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.35); border-radius:999px; padding:5px 12px; }
@@ -7,7 +10,7 @@ export const NAV_CSS = `
 `;
 
 export function navAdmin(clave: string, actual: "panel" | "cuentas" | "eventos"): string {
-  const q = `?clave=${encodeURIComponent(clave)}`;
+  const q = conClave(clave);
   const enlaces: [typeof actual, string, string][] = [
     ["panel", "/admin", "📊 Panel"],
     ["cuentas", "/cuentas", "💰 Cuentas"],
@@ -26,8 +29,8 @@ export const TABS_CSS = `
 .tabs a.actual, .tabs a.actual:hover { background:#F7F5EC; color:#1C2260; }
 `;
 export function tabsEventos(clave: string | null, actual: "eventos" | "galeria" | "juntas"): string {
-  if (!clave) return "";   // vista pública (galería sin clave): sin pestañas privadas
-  const q = `?clave=${encodeURIComponent(clave)}`;
+  if (clave === null) return "";   // vista pública (galería sin clave): sin pestañas privadas
+  const q = conClave(clave);
   const t: [typeof actual, string, string][] = [
     ["eventos", "/eventos", "🎟️ Eventos"], ["galeria", "/galeria", "🖼️ Galería"], ["juntas", "/juntas", "📋 Juntas"],
   ];

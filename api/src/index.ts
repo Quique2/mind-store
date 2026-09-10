@@ -20,13 +20,15 @@ import { leerEventos, leerAsistencias, crearEvento, alternarEvento, buscarEvento
          type TipoId } from "./eventos";
 import multer from "multer";
 import { leerStaff, guardarStaff, leerAreas, guardarAreas, buscarPersona, normMat, generarPin,
-         ponerPin, pinCorrecto, crearSesion, leerSesion, cookieSesion, cookieBorrar,
-         esPresidencia, dirigeArea, puedeAsignar, type Persona } from "./staff";
-import { leerTareas, crearTarea, conId, actualizar, borrarTarea, posponer, cerrarSemana,
-         esAbierta, enSemana, tocaA, semanaActual, lunesDe, DIR_EVIDENCIA, archivoSeguro,
-         nuevoId as nuevoIdTarea, type Tarea, type EstadoTarea } from "./tareas";
-import { renderEntrar, renderElegirPin, renderYo, renderTablero, renderLamina,
+         ponerPin, pinCorrecto, crearSesion, leerSesion, cookieSesion, cookieBorrar, staffActivo,
+         esPresidencia, dirigeArea, puedeAsignar, ROLES, type Persona, type RolId } from "./staff";
+import { leerTareas, guardarTareas, crearTarea, conId, actualizar, borrarTarea, posponer, cerrarSemana,
+         esAbierta, enSemana, tocaA, atrasada, semanaActual, lunesDe, hoyISO, sumarDias, DIR_EVIDENCIA,
+         archivoSeguro, nuevoId as nuevoIdTarea, type Tarea, type EstadoTarea } from "./tareas";
+import { renderEntrar, renderElegirPin, renderYo, renderTablero, renderTableroLista, renderLamina,
          renderCerrarSemana, renderEquipo } from "./portal";
+import { conClave } from "./ui";
+import { slug } from "./products";
 import { notionActivo, espejar, espejarPronto, importarDeNotion, EXT_EVIDENCIA } from "./notion";
 import { leerGaleria, agregarItem, borrarItem, infoEnlace, nuevoId, nombreSeguro, renderGaleria,
          DIR_GALERIA, EXT, LIMITE_MB } from "./galeria";
@@ -111,10 +113,18 @@ const claveOk = (req: express.Request) => {
   const clave = process.env.CUENTAS_CLAVE;
   return Boolean(clave) && req.query.clave === clave;
 };
+/** Nivel presidencia por sesión del portal (para navegar sin la clave). */
+function sesionPresidencia(req: express.Request): Persona | null {
+  const p = sesion(req);
+  return p && !p.provisional && esPresidencia(p) ? p : null;
+}
+/** Acceso a la administración: con la clave, o con sesión del portal de nivel presidencia. */
+const acceso = (req: express.Request) => claveOk(req) || Boolean(sesionPresidencia(req));
+const claveDe = (req: express.Request) => (claveOk(req) ? String(req.query.clave) : "");
 
 async function cuentasHandler(req: express.Request, res: express.Response,
                               csv: boolean, aviso?: string) {
-  if (!claveOk(req)) {
+  if (!acceso(req)) {
     return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
   }
   const manuales = leerCSV();
@@ -123,7 +133,7 @@ async function cuentasHandler(req: express.Request, res: express.Response,
   if (csv) {
     res.type("text/csv").send(renderCSV(movs));
   } else {
-    res.type("html").send(renderCuentas(movs, st.ok, String(req.query.clave), aviso, catalogo(),
+    res.type("html").send(renderCuentas(movs, st.ok, claveDe(req), aviso, catalogo(),
                                         nombresEventos()));
   }
 }
@@ -151,7 +161,7 @@ const MovSchema = z.object({
 });
 
 app.post("/cuentas/nuevo", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const parsed = MovSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).send("Datos inválidos. Regresa y revisa el formulario.");
   if (!hayDiscoPersistente()) {
@@ -161,7 +171,7 @@ app.post("/cuentas/nuevo", express.urlencoded({ extended: false }), (req, res) =
   agregarMov({ fecha: m.fecha, evento: eventoElegido(m.evento, m.eventoOtro), metodo: m.metodo,
                concepto: m.concepto, monto: m.monto, detalle: m.detalle, tipo: m.tipo });
   const ok = `✓ ${m.tipo === "gasto" ? "Gasto registrado" : "Registrado"}: ${m.concepto} · ${m.tipo === "gasto" ? "−" : ""}$${m.monto.toFixed(2)} (${m.metodo})`;
-  res.redirect(`/cuentas?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(ok)}`);
+  res.redirect(`/cuentas${conClave(claveDe(req))}&ok=${encodeURIComponent(ok)}`);
 });
 
 // cambiar evento / concepto de un cobro con tarjeta (Stripe) o de un movimiento capturado aquí
@@ -172,7 +182,7 @@ const EditSchema = z.object({
   concepto: z.string().trim().min(1).max(80),
 });
 app.post("/cuentas/editar", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const parsed = EditSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).send("Datos inválidos. Regresa y revisa el formulario.");
   if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; el cambio no se guardó.");
@@ -186,32 +196,32 @@ app.post("/cuentas/editar", express.urlencoded({ extended: false }), (req, res) 
     const r = editarMov(Number(e.ref.slice(6)), { evento, concepto: e.concepto });
     if (r) msg = `✓ Actualizado: ${r.concepto} · ${r.evento}`;
   }
-  res.redirect(`/cuentas?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(msg)}`);
+  res.redirect(`/cuentas${conClave(claveDe(req))}&ok=${encodeURIComponent(msg)}`);
 });
 
 app.post("/cuentas/borrar", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const idx = Number((req.body as { idx?: string }).idx);
   if (!Number.isInteger(idx) || idx < 0) return res.status(400).send("Índice inválido.");
   const concepto = borrarMov(idx);
   const msg = concepto ? `✓ Borrado: ${concepto}` : "No se encontró ese movimiento.";
-  res.redirect(`/cuentas?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(msg)}`);
+  res.redirect(`/cuentas${conClave(claveDe(req))}&ok=${encodeURIComponent(msg)}`);
 });
 
 // ---------------- Panel ejecutivo + catálogo editable ----------------
 app.get("/admin", async (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
   const st = await movsStripe(stripe);
   res.type("html").send(renderPanel({
     movs: [...leerCSV(), ...st.movs], stripeOk: st.ok,
     eventos: leerEventos(), asistencias: leerAsistencias(), preregistros: leerPreregistros(),
     productos: catalogo(), editado: hayCatalogoEditado(),
-    clave: String(req.query.clave),
+    clave: claveDe(req),
     aviso: req.query.ok ? String(req.query.ok).slice(0, 200) : undefined,
   }));
 });
 const volverAdmin = (req: express.Request, aviso: string) =>
-  `/admin?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(aviso)}#productos`;
+  `/admin${conClave(claveDe(req))}&ok=${encodeURIComponent(aviso)}#productos`;
 
 const ProductoSchema = z.object({
   id: z.string().max(40).optional().default(""),
@@ -223,7 +233,7 @@ const ProductoSchema = z.object({
   disponible: z.string().optional(),            // checkbox: "on" o ausente
 });
 app.post("/admin/productos/guardar", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const parsed = ProductoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).send("Datos inválidos. Regresa y revisa el formulario.");
   if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; el catálogo no se guardó.");
@@ -236,13 +246,13 @@ app.post("/admin/productos/guardar", express.urlencoded({ extended: false }), (r
   res.redirect(volverAdmin(req, `✓ ${nuevo ? "Agregado" : "Guardado"}: ${producto.nombre} · ${(producto.precioCentavos / 100).toFixed(2)}${producto.disponible === false ? " (oculto)" : ""}`));
 });
 app.post("/admin/productos/borrar", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; el catálogo no se guardó.");
   const quitado = borrarProducto(String((req.body as { id?: string }).id ?? ""));
   res.redirect(volverAdmin(req, quitado ? `✓ Quitado de la tienda: ${quitado.nombre}` : "No se encontró ese producto."));
 });
 app.post("/admin/productos/restaurar", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   restaurarCatalogo();
   res.redirect(volverAdmin(req, "✓ Catálogo original restaurado."));
 });
@@ -252,24 +262,24 @@ const urlBase = (req: express.Request) =>
   process.env.PUBLIC_URL ?? `${req.protocol}://${req.get("host")}`;
 // las acciones lanzadas desde la pestaña Juntas traen &volver=juntas y regresan ahí
 const volverEventos = (req: express.Request, aviso: string) =>
-  `/${req.query.volver === "juntas" ? "juntas" : "eventos"}?clave=${encodeURIComponent(String(req.query.clave))}&ok=${encodeURIComponent(aviso)}`;
+  `/${req.query.volver === "juntas" ? "juntas" : "eventos"}${conClave(claveDe(req))}&ok=${encodeURIComponent(aviso)}`;
 const idOk = (id: string) => /^[a-z0-9_-]{4,12}$/i.test(id);
 
 app.get("/eventos", (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
   const ok = req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
   res.type("html").send(renderAdmin(leerEventos(), leerAsistencias(), leerPreregistros(),
-                                    String(req.query.clave), urlBase(req), ok, "eventos"));
+                                    claveDe(req), urlBase(req), ok, "eventos"));
 });
 app.get("/juntas", (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
   const ok = req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
   res.type("html").send(renderAdmin(leerEventos(), leerAsistencias(), leerPreregistros(),
-                                    String(req.query.clave), urlBase(req), ok, "juntas"));
+                                    claveDe(req), urlBase(req), ok, "juntas"));
 });
 
 app.get("/eventos.csv", (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const soloJuntas = req.query.solo === "juntas";
   const evs = leerEventos().filter((e) => esJunta(e) === soloJuntas);
   const ids = new Set(evs.map((e) => e.id));
@@ -284,7 +294,7 @@ app.use("/galeria/archivo", (req, res, next) => {
 }, express.static(DIR_GALERIA, { maxAge: "30d", immutable: true, index: false }));
 
 app.get("/galeria", (req, res) => {
-  const clave = claveOk(req) ? String(req.query.clave) : null;
+  const clave = acceso(req) ? claveDe(req) : null;
   const filtro = String(req.query.evento ?? "");
   const ok = clave && req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
   res.type("html").send(renderGaleria(leerGaleria(), leerEventos(), clave,
@@ -307,7 +317,7 @@ const subida = multer({
 });
 app.post("/galeria/subir",
   (req, res, next) => {
-    if (!claveOk(req)) return res.status(401).json({ ok: false, error: "clave incorrecta" });
+    if (!acceso(req)) return res.status(401).json({ ok: false, error: "clave incorrecta" });
     (req as express.Request & { galeriaId: string }).galeriaId = nuevoId();
     next();
   },
@@ -316,7 +326,7 @@ app.post("/galeria/subir",
     next();
   }),
   (req, res) => {
-    const files = req.files as Record<string, Express.Multer.File[] | undefined>;
+    const files = (req.files ?? {}) as Record<string, Express.Multer.File[] | undefined>;
     const archivo = files.archivo?.[0];
     if (!archivo) return res.status(400).json({ ok: false, error: "falta el archivo" });
     const b = req.body as { evento?: string; titulo?: string };
@@ -335,9 +345,9 @@ const EnlaceSchema = z.object({
   evento: z.string().max(12).optional().default(""),
 });
 const volverGaleria = (req: express.Request, aviso: string, evento = "") =>
-  `/galeria?clave=${encodeURIComponent(String(req.query.clave))}${evento ? `&evento=${encodeURIComponent(evento)}` : ""}&ok=${encodeURIComponent(aviso)}`;
+  `/galeria${conClave(claveDe(req))}${evento ? `&evento=${encodeURIComponent(evento)}` : ""}&ok=${encodeURIComponent(aviso)}`;
 app.post("/galeria/enlace", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const parsed = EnlaceSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).send("Enlace inválido. Regresa y revisa el formulario.");
   if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; no se guardó.");
@@ -349,7 +359,7 @@ app.post("/galeria/enlace", express.urlencoded({ extended: false }), (req, res) 
   res.redirect(volverGaleria(req, `✓ Enlace agregado (${info.proveedor})`, evento));
 });
 app.post("/galeria/borrar", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const id = String((req.body as { id?: string }).id ?? "");
   const item = /^[a-z0-9]{6,20}$/.test(id) ? borrarItem(id) : null;
   res.redirect(volverGaleria(req, item ? "✓ Elemento borrado de la galería" : "No se encontró ese elemento.", item?.evento));
@@ -366,7 +376,7 @@ const EventoSchema = z.object({
   prereg: z.string().optional(),      // checkbox: "on" o ausente
 });
 app.post("/eventos/nuevo", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const parsed = EventoSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).send("Datos inválidos. Regresa y revisa el formulario.");
   if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente; el evento no se guardó.");
@@ -383,7 +393,7 @@ app.post("/eventos/nuevo", express.urlencoded({ extended: false }), (req, res) =
 
 // abrir / cerrar el prerregistro de un evento
 app.post("/eventos/prereg", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const id = String((req.body as { id?: string }).id ?? "");
   const ev = idOk(id) ? alternarPrereg(id) : null;
   res.redirect(volverEventos(req, ev
@@ -393,21 +403,21 @@ app.post("/eventos/prereg", express.urlencoded({ extended: false }), (req, res) 
 
 // borrar: primero la pantalla de confirmación (GET), luego el borrado real (POST con confirmar=si)
 app.get("/eventos/borrar", (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const id = String(req.query.id ?? "");
   const ev = idOk(id) ? buscarEvento(id) : undefined;
   if (!ev) return res.redirect(volverEventos(req, "No se encontró ese evento."));
   const suyas = leerAsistencias().filter((a) => a.evento === id);
   const suyosPre = leerPreregistros().filter((p) => p.evento === id);
   res.type("html").send(renderConfirmarBorrado(ev, suyas.length, suyas.filter(esStaff).length,
-                                               suyosPre.length, String(req.query.clave)));
+                                               suyosPre.length, claveDe(req)));
 });
 app.post("/eventos/borrar", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const b = req.body as { id?: string; confirmar?: string };
   const id = String(b.id ?? "");
   if (b.confirmar !== "si") {
-    return res.redirect(`/eventos/borrar?clave=${encodeURIComponent(String(req.query.clave))}&id=${encodeURIComponent(id)}`);
+    return res.redirect(`/eventos/borrar${conClave(claveDe(req))}&id=${encodeURIComponent(id)}`);
   }
   const r = idOk(id) ? borrarEvento(id) : null;
   res.redirect(volverEventos(req, r
@@ -416,7 +426,7 @@ app.post("/eventos/borrar", express.urlencoded({ extended: false }), (req, res) 
 });
 
 app.post("/eventos/alternar", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const id = String((req.body as { id?: string }).id ?? "");
   const ev = idOk(id) ? alternarEvento(id) : null;
   res.redirect(volverEventos(req, ev
@@ -427,7 +437,7 @@ app.post("/eventos/alternar", express.urlencoded({ extended: false }), (req, res
 // acciones del panel sobre asistencias (con clave). Van ANTES de /asistencia/:id
 // para que "staff", "quitar" y "manual" no se interpreten como ids de evento.
 app.post("/asistencia/staff", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const b = req.body as { matricula?: string; staff?: string };
   const hacer = b.staff === "si";
   const r = cambiarStaff(String(b.matricula ?? ""), hacer);
@@ -436,7 +446,7 @@ app.post("/asistencia/staff", express.urlencoded({ extended: false }), (req, res
     : "No se encontró esa matrícula."));
 });
 app.post("/asistencia/quitar", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const b = req.body as { evento?: string; matricula?: string };
   const evId = String(b.evento ?? "");
   const r = idOk(evId) ? quitarAsistencia(evId, String(b.matricula ?? "")) : null;
@@ -452,7 +462,7 @@ const ManualSchema = z.object({
   otroStaff: z.string().optional(),
 });
 app.post("/asistencia/manual", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const parsed = ManualSchema.safeParse(req.body);
   const ev = parsed.success && idOk(parsed.data.evento) ? buscarEvento(parsed.data.evento) : undefined;
   if (!parsed.success || !ev) return res.redirect(volverEventos(req, "No se encontró ese evento."));
@@ -460,6 +470,7 @@ app.post("/asistencia/manual", express.urlencoded({ extended: false }), (req, re
   // se aceptan las matrículas conocidas (staff e historial) y las prerregistradas a ESTE evento
   const conocidas = new Map(listaPersonas(leerAsistencias())
     .map((p) => [p.matricula, { nombre: p.nombre, staff: p.staff }]));
+  for (const s of staffActivo()) conocidas.set(s.matricula, { nombre: s.nombre, staff: true });
   for (const p of leerPreregistros().filter((x) => x.evento === ev.id)) {
     if (!conocidas.has(p.matricula)) conocidas.set(p.matricula, { nombre: p.nombre, staff: false });
   }
@@ -489,7 +500,7 @@ app.post("/asistencia/manual", express.urlencoded({ extended: false }), (req, re
 // ---------------- Prerregistro (apartar lugar antes del evento) ----------------
 // las acciones con clave van ANTES de /preregistro/:id para que no las tome por id
 app.post("/preregistro/quitar", express.urlencoded({ extended: false }), (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const b = req.body as { evento?: string; matricula?: string };
   const evId = String(b.evento ?? "");
   const r = idOk(evId) ? quitarPrereg(evId, String(b.matricula ?? "")) : null;
@@ -498,7 +509,7 @@ app.post("/preregistro/quitar", express.urlencoded({ extended: false }), (req, r
     : "No se encontró ese prerregistro."));
 });
 app.get("/preregistros.csv", (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   res.type("text/csv").attachment("prerregistros-mind.csv")
      .send(renderCSVPre(leerEventos(), leerPreregistros(), leerAsistencias()));
 });
@@ -603,7 +614,8 @@ app.get("/portal", (req, res) => {
   const p = sesion(req);
   if (!p) return res.type("html").send(renderEntrar());
   if (p.provisional) return res.type("html").send(renderElegirPin(p));
-  res.type("html").send(renderYo(p, leerTareas(), leerAreas(), leerStaff(), eventosLite(), avisoDe(req)));
+  res.type("html").send(renderYo(p, leerTareas(), leerAreas(), leerStaff(), eventosLite(), avisoDe(req),
+                                 String(req.query.mes ?? "")));
 });
 
 // Un PIN son cuatro dígitos: sin freno, alguien podría probarlos todos.
@@ -690,8 +702,15 @@ app.get("/tareas", (req, res) => {
   if (!p) return;
   const areas = leerAreas();
   if (!puedeAsignar(p, areas)) return res.redirect("/portal");
+  res.type("html").send(renderTablero(p, leerTareas(), areas, leerStaff(), eventosLite(), avisoDe(req)));
+});
+app.get("/tareas/lista", (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const areas = leerAreas();
+  if (!puedeAsignar(p, areas)) return res.redirect("/portal");
   const area = String(req.query.area ?? "");
-  res.type("html").send(renderTablero(p, leerTareas(), areas, leerStaff(), eventosLite(), avisoDe(req), area));
+  res.type("html").send(renderTableroLista(p, leerTareas(), areas, leerStaff(), eventosLite(), avisoDe(req), area));
 });
 
 const listaDe = (v: unknown): string[] =>
@@ -923,7 +942,7 @@ app.post("/tareas/equipo/director", urlencoded, (req, res) => {
 
 // ---- importación desde Notion y espejo (con la clave del panel) ----
 app.post("/admin/notion/importar", urlencoded, async (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   if (!notionActivo()) return res.status(503).send("Falta configurar NOTION_TOKEN.");
   if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente.");
   const soloVer = String((req.body as { modo?: string }).modo ?? "") !== "aplicar";
@@ -935,9 +954,212 @@ app.post("/admin/notion/importar", urlencoded, async (req, res) => {
   }
 });
 app.post("/admin/notion/espejo", urlencoded, async (req, res) => {
-  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const r = await espejar();
   res.redirect(volverAdmin(req, r.mensaje));
+});
+
+// ---------------- equipo: editar, dar de alta, áreas (nivel presidencia) ----------------
+const contraste = (hex: string) => {
+  const n = parseInt(hex.slice(1), 16);
+  const l = 0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
+  return l > 150 ? "#1C2260" : "#ffffff";
+};
+app.post("/tareas/equipo/persona", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  if (!esPresidencia(p)) return res.redirect("/portal");
+  const b = req.body as { matricula?: string; area?: string; rol?: string; admin?: string; activo?: string };
+  const lista = leerStaff();
+  const quien = lista.find((x) => x.matricula === normMat(String(b.matricula ?? "")));
+  if (!quien) return res.redirect(volverPortal("/tareas/equipo", "No se encontró a esa persona."));
+  const areas = leerAreas();
+  const area = String(b.area ?? "");
+  if (area && !areas.some((a) => a.id === area)) return res.redirect(volverPortal("/tareas/equipo", "Esa área no existe."));
+  const rol = String(b.rol ?? "");
+  if (!(rol in ROLES)) return res.redirect(volverPortal("/tareas/equipo", "Ese rol no existe."));
+  quien.area = area;
+  if (quien.matricula === p.matricula) {   // a uno mismo solo el área: el rol lo cambia otra persona
+    if (rol !== quien.rol || (b.admin === "on") !== Boolean(quien.admin) || (b.activo === "on") !== quien.activo) {
+      guardarStaff(lista);
+      return res.redirect(volverPortal("/tareas/equipo", "Tu área quedó guardada. Tu rol, admin o baja los cambia otra persona de presidencia, para que nadie se quede fuera por accidente."));
+    }
+  } else {
+    quien.rol = rol as RolId;
+    quien.admin = b.admin === "on" ? true : undefined;
+    quien.activo = b.activo === "on";
+  }
+  guardarStaff(lista);
+  espejarPronto();
+  const nombreArea = areas.find((a) => a.id === area)?.nombre ?? "sin área";
+  res.redirect(volverPortal("/tareas/equipo", `✓ ${quien.nombre}: ${ROLES[quien.rol].nombre} de ${nombreArea}${quien.activo ? "" : " · dado de baja"}`));
+});
+
+const AltaSchema = z.object({
+  nombre: z.string().trim().min(5).max(80),
+  apodo: z.string().trim().max(20).optional().default(""),
+  matricula: z.string().trim().min(6).max(12),
+  area: z.string().max(40).optional().default(""),
+  rol: z.string().refine((r) => r in ROLES, "rol").optional().default("coordinacion"),
+});
+app.post("/tareas/equipo/alta", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  if (!esPresidencia(p)) return res.redirect("/portal");
+  const parsed = AltaSchema.safeParse(req.body);
+  if (!parsed.success) return res.redirect(volverPortal("/tareas/equipo", "Revisa nombre y matrícula (la matrícula va tipo A0XXXXXXX)."));
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente.");
+  const d = parsed.data;
+  const mat = normMat(d.matricula);
+  const lista = leerStaff();
+  const areas = leerAreas();
+  const area = areas.some((a) => a.id === d.area) ? d.area : "";
+  const pin = generarPin();
+  const ya = lista.find((x) => x.matricula === mat);
+  if (ya && ya.activo) return res.redirect(volverPortal("/tareas/equipo", `${ya.nombre} ya está dado de alta con esa matrícula.`));
+  if (ya) {   // estaba de baja: se reactiva con PIN nuevo
+    ya.activo = true; ya.nombre = d.nombre; ya.apodo = d.apodo; ya.area = area; ya.rol = d.rol as RolId;
+    ponerPin(ya, pin, true);
+  } else {
+    const nuevo: Persona = { matricula: mat, nombre: d.nombre, apodo: d.apodo, area, rol: d.rol as RolId, activo: true };
+    ponerPin(nuevo, pin, true);
+    lista.push(nuevo);
+  }
+  guardarStaff(lista);
+  espejarPronto();
+  res.redirect(volverPortal("/tareas/equipo", `✓ ${d.nombre} dado de alta · PIN provisional: ${pin} — cópialo ahora, no se vuelve a mostrar`));
+});
+
+app.post("/tareas/equipo/area/nueva", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  if (!esPresidencia(p)) return res.redirect("/portal");
+  const b = req.body as { nombre?: string; emoji?: string; color?: string };
+  const nombre = String(b.nombre ?? "").trim().slice(0, 40);
+  if (nombre.length < 3) return res.redirect(volverPortal("/tareas/equipo", "El nombre del área necesita al menos tres letras."));
+  const areas = leerAreas();
+  let id = slug(nombre);
+  for (let n = 2; areas.some((a) => a.id === id); n++) id = `${slug(nombre)}-${n}`;
+  const color = /^#[0-9a-fA-F]{6}$/.test(String(b.color ?? "")) ? String(b.color).toUpperCase() : "#C026D3";
+  const emoji = String(b.emoji ?? "").trim().slice(0, 4) || "📌";
+  areas.push({ id, nombre, color, tinta: contraste(color), emoji, orden: Math.max(-1, ...areas.map((a) => a.orden)) + 1 });
+  guardarAreas(areas);
+  espejarPronto();
+  res.redirect(volverPortal("/tareas/equipo", `✓ Área creada: ${emoji} ${nombre}`));
+});
+app.post("/tareas/equipo/area/borrar", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  if (!esPresidencia(p)) return res.redirect("/portal");
+  const id = String((req.body as { area?: string }).area ?? "");
+  const areas = leerAreas();
+  const a = areas.find((x) => x.id === id);
+  if (!a) return res.redirect(volverPortal("/tareas/equipo", "No se encontró esa área."));
+  guardarAreas(areas.filter((x) => x.id !== id));
+  // tareas y personas se quedan, solo pierden el área
+  const tareas = leerTareas();
+  let n = 0;
+  for (const t of tareas) if (t.area === id) { t.area = ""; n++; }
+  guardarTareas(tareas);
+  const lista = leerStaff();
+  for (const s of lista) if (s.area === id) s.area = "";
+  guardarStaff(lista);
+  espejarPronto();
+  res.redirect(volverPortal("/tareas/equipo", `✓ Área borrada: ${a.nombre}${n ? ` · ${n} tarea${n === 1 ? "" : "s"} quedaron sin área` : ""}`));
+});
+
+// ---------------- API JSON del tablero visual (sesión del portal) ----------------
+const jsonSesion = (req: express.Request, res: express.Response): Persona | null => {
+  const p = sesion(req);
+  if (!p || p.provisional) { res.status(401).json({ error: "Tu sesión terminó. Entra al portal otra vez." }); return null; }
+  return p;
+};
+const tareaJSON = (t: Tarea) => ({
+  id: t.id, titulo: t.titulo, detalle: t.detalle ?? "", area: t.area, asignados: t.asignados,
+  vigencia: t.vigencia, estado: t.estado, evidencia: t.evidencia.length, atrasada: atrasada(t),
+});
+const fechaOpt = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().or(z.literal("")).nullable();
+const VigenciaSchema = z.object({
+  tipo: z.enum(["fechas", "transversal", "evento"]),
+  inicio: fechaOpt, fin: fechaOpt, evento: z.string().max(12).optional().nullable(),
+});
+const PatchSchema = z.object({
+  titulo: z.string().trim().min(3).max(120).optional(),
+  detalle: z.string().trim().max(300).optional(),
+  area: z.string().max(40).optional(),
+  asignados: z.array(z.string().max(14)).max(40).optional(),
+  estado: z.enum(["pendiente", "curso", "hecha", "vencida"]).optional(),
+  vigencia: VigenciaSchema.optional(),
+  posponer: z.boolean().optional(),
+});
+
+app.post("/api/tareas", (req, res) => {
+  const p = jsonSesion(req, res);
+  if (!p) return;
+  const parsed = z.object({ titulo: z.string().trim().min(3).max(120), area: z.string().max(40) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "El título necesita al menos tres letras." });
+  const areas = leerAreas();
+  if (!areas.some((a) => a.id === parsed.data.area)) return res.status(400).json({ error: "Esa área no existe." });
+  if (!dirigeArea(p, parsed.data.area, areas)) return res.status(403).json({ error: "No puedes crear tareas en esa área." });
+  if (!hayDiscoPersistente()) return res.status(503).json({ error: "No hay disco persistente." });
+  // nace en la semana actual; la fecha exacta se afina después desde la tarjeta
+  const t = crearTarea({ titulo: parsed.data.titulo, detalle: "", area: parsed.data.area, asignados: [],
+                         vigencia: { tipo: "fechas", inicio: hoyISO(), fin: sumarDias(semanaActual(), 6) },
+                         creadaPor: p.matricula });
+  espejarPronto();
+  res.json(tareaJSON(t));
+});
+
+app.patch("/api/tareas/:id", (req, res) => {
+  const p = jsonSesion(req, res);
+  if (!p) return;
+  const t = conId(String(req.params.id));
+  if (!t) return res.status(404).json({ error: "Esa tarea ya no existe." });
+  const parsed = PatchSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Datos inválidos." });
+  const c = parsed.data;
+  const areas = leerAreas();
+  const gestiona = dirigeArea(p, t.area, areas);
+  const mia = tocaA(t, p.matricula);
+  const edita = c.titulo !== undefined || c.detalle !== undefined || c.area !== undefined ||
+                c.asignados !== undefined || c.vigencia !== undefined;
+  if (edita && !gestiona) return res.status(403).json({ error: "Solo quien dirige el área puede editar esa tarea." });
+  if (c.area !== undefined && c.area !== "" && !areas.some((a) => a.id === c.area)) return res.status(400).json({ error: "Esa área no existe." });
+  if (c.area !== undefined && c.area !== t.area && !dirigeArea(p, c.area, areas)) return res.status(403).json({ error: "No puedes mover tareas a esa área." });
+  if ((c.estado !== undefined || c.posponer) && !gestiona && !mia) return res.status(403).json({ error: "Esa tarea no es tuya." });
+  if (c.estado === "vencida" && !gestiona) return res.status(403).json({ error: "Solo quien dirige el área puede dar por vencida una tarea." });
+  const activas = new Set(staffActivo().map((s) => s.matricula));
+  const r = actualizar(t.id, (x) => {
+    if (c.titulo !== undefined) x.titulo = c.titulo;
+    if (c.detalle !== undefined) x.detalle = c.detalle;
+    if (c.area !== undefined) x.area = c.area;
+    if (c.asignados !== undefined) x.asignados = [...new Set(c.asignados.map(normMat).filter((m) => activas.has(m)))];
+    if (c.vigencia) {
+      const v = c.vigencia;
+      x.vigencia = v.tipo === "fechas" ? { tipo: "fechas", inicio: v.inicio || undefined, fin: v.fin || undefined }
+        : v.tipo === "evento" ? { tipo: "evento", evento: v.evento || undefined } : { tipo: "transversal" };
+    }
+    if (c.estado !== undefined) {
+      x.estado = c.estado;
+      if (c.estado === "hecha") { x.hechaEl = new Date().toISOString(); x.hechaPor = p.matricula; }
+      else { x.hechaEl = undefined; x.hechaPor = undefined; }
+      x.cerradaEn = c.estado === "vencida" ? semanaActual() : undefined;
+    }
+    if (c.posponer) posponer(x);
+  });
+  espejarPronto();
+  res.json(tareaJSON(r!));
+});
+
+app.delete("/api/tareas/:id", (req, res) => {
+  const p = jsonSesion(req, res);
+  if (!p) return;
+  const t = conId(String(req.params.id));
+  if (!t) return res.status(404).json({ error: "Esa tarea ya no existe." });
+  if (!dirigeArea(p, t.area, leerAreas())) return res.status(403).json({ error: "Solo quien dirige el área puede borrar esa tarea." });
+  borrarTarea(t.id);
+  espejarPronto();
+  res.json({ ok: true });
 });
 
 // build web de Expo (app/dist) en producción

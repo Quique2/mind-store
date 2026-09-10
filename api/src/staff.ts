@@ -73,6 +73,17 @@ export const normMat = (m: string) => m.toUpperCase().replace(/[^A-Z0-9]/g, "").
 export const buscarPersona = (matricula: string, lista = leerStaff()) =>
   lista.find((p) => p.matricula === normMat(matricula));
 export const nombreCorto = (p: Persona) => p.apodo?.trim() || p.nombre.split(" ")[0];
+/** Personas activas, ordenadas por nombre. */
+export const staffActivo = (): Persona[] =>
+  leerStaff().filter((p) => p.activo).sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+export const esStaffActivo = (matricula: string) =>
+  leerStaff().some((p) => p.activo && p.matricula === normMat(matricula));
+/** Iniciales para el avatar: dos letras del apodo o del nombre. */
+export function iniciales(p: Persona): string {
+  const partes = (p.apodo?.trim() || p.nombre).trim().split(/\s+/);
+  const t = partes.length > 1 ? partes[0][0] + partes[1][0] : partes[0].slice(0, 2);
+  return t.toUpperCase();
+}
 
 /** Área a la que pertenece, con respaldo si el área fue borrada. */
 export function areaDe(p: Persona, areas = leerAreas()): Area {

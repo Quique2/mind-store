@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { TIPOS, fechaBonita, type Evento } from "./eventos";
-import { NAV_CSS, TABS_CSS, navAdmin, tabsEventos } from "./ui";
+import { NAV_CSS, TABS_CSS, navAdmin, tabsEventos, conClave } from "./ui";
 
 export interface Item {
   id: string;
@@ -143,7 +143,7 @@ ${NAV_CSS}${TABS_CSS}`;
 export function renderGaleria(items: Item[], eventos: Evento[], clave: string | null,
                               filtro: string, base: string, aviso?: string): string {
   const admin = clave !== null;
-  const q = admin ? `?clave=${encodeURIComponent(clave)}` : "";
+  const q = admin ? conClave(clave) : "";
   const evIdx = new Map(eventos.map((e) => [e.id, e]));
   const evOrden = [...eventos].sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
   const visibles = items.filter((it) => filtro === "" || (filtro === "sin" ? !it.evento : it.evento === filtro))
@@ -155,8 +155,10 @@ export function renderGaleria(items: Item[], eventos: Evento[], clave: string | 
     if (it.miniatura) return `<img class="mini" src="/galeria/archivo/${esc(it.miniatura)}" alt="" loading="lazy">`;
     return it.tipo === "foto" ? `<img class="mini" src="/galeria/archivo/${esc(it.archivo ?? "")}" alt="" loading="lazy">` : '<div class="mini sin">🎬</div>';
   };
-  const chip = (valor: string, texto: string) =>
-    `<a href="/galeria?${valor ? `evento=${encodeURIComponent(valor)}&` : ""}${admin ? `clave=${encodeURIComponent(clave)}` : ""}"${filtro === valor ? ' class="actual"' : ""}>${texto}</a>`;
+  const chip = (valor: string, texto: string) => {
+    const params = [...(valor ? [`evento=${encodeURIComponent(valor)}`] : []), ...(admin ? [conClave(clave).slice(1)] : [])];
+    return `<a href="/galeria${params.length ? "?" + params.join("&") : ""}"${filtro === valor ? ' class="actual"' : ""}>${texto}</a>`;
+  };
   const chips = [chip("", "Todo"),
     ...evOrden.filter((e) => conItems.has(e.id)).map((e) => chip(e.id, `${TIPOS[e.tipo].emoji} ${esc(e.titulo)}`)),
     ...(conItems.has("") ? [chip("sin", "Sin evento")] : [])].join("");
@@ -213,7 +215,7 @@ ${visibles.length ? `<div class="grid">${tarjetas}</div>` : `<div class="vacio">
 <div id="luz" role="dialog" aria-modal="true"><button class="cerrar" onclick="cerrar()" aria-label="Cerrar">✕</button><button class="ant" onclick="mover(-1)" aria-label="Anterior">‹</button><button class="sig" onclick="mover(1)" aria-label="Siguiente">›</button><div class="marco" id="marco"></div><div class="pie" id="luz-pie"></div></div>
 <script>
 const D = ${jsonSeguro(datos)};
-const CLAVE = ${jsonSeguro(clave ?? "")};
+const Q = ${jsonSeguro(q)};
 const LIMITE = ${LIMITE_MB} * 1024 * 1024;
 let actual = -1;
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -259,7 +261,7 @@ function posterVideo(file) {
 function enviar(fd, onProgreso) {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
-    x.open('POST', '/galeria/subir?clave=' + encodeURIComponent(CLAVE));
+    x.open('POST', '/galeria/subir' + Q);
     x.upload.onprogress = (e) => { if (e.lengthComputable) onProgreso(e.loaded / e.total); };
     x.onload = () => { try { const r = JSON.parse(x.responseText); r.ok ? resolve(r) : reject(new Error(r.error || 'error')); } catch (e) { reject(new Error('respuesta inválida (' + x.status + ')')); } };
     x.onerror = () => reject(new Error('sin conexión'));
@@ -296,7 +298,7 @@ async function subirTodo(files) {
       barra.style.width = '100%'; est.textContent = '✓ listo'; ok++;
     } catch (e) { est.textContent = '✗ ' + e.message; est.style.color = '#A03434'; }
   }
-  if (ok) setTimeout(() => { location.href = '/galeria?clave=' + encodeURIComponent(CLAVE) + (evento ? '&evento=' + encodeURIComponent(evento) : '') + '&ok=' + encodeURIComponent('✓ ' + ok + ' archivo' + (ok === 1 ? '' : 's') + ' subido' + (ok === 1 ? '' : 's')); }, 600);
+  if (ok) setTimeout(() => { location.href = '/galeria' + Q + (evento ? '&evento=' + encodeURIComponent(evento) : '') + '&ok=' + encodeURIComponent('✓ ' + ok + ' archivo' + (ok === 1 ? '' : 's') + ' subido' + (ok === 1 ? '' : 's')); }, 600);
 }
 const inp = document.getElementById('archivos');
 if (inp) {

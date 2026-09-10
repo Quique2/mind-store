@@ -8,7 +8,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { NAV_CSS, TABS_CSS, navAdmin, tabsEventos } from "./ui";
+import { NAV_CSS, TABS_CSS, navAdmin, tabsEventos, conClave, yClave } from "./ui";
+import { staffActivo, esStaffActivo } from "./staff";
 
 export interface Evento {
   id: string;
@@ -155,7 +156,7 @@ export function registrar(eventoId: string, nombre: string, matricula: string, s
   const lista = leerAsistencias();
   if (lista.some((a) => a.evento === eventoId && a.matricula === mat)) return "duplicado" as const;
   lista.push({ evento: eventoId, nombre: limpiar(nombre), matricula: mat,
-               ts: new Date().toISOString(), staff: esJunta(ev) ? true : staff });
+               ts: new Date().toISOString(), staff: esJunta(ev) || esStaffActivo(mat) ? true : staff });
   escribirJSON(F_AS, lista);
   return "ok" as const;
 }
@@ -444,9 +445,12 @@ export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre
   const publico = juntas ? asis : asis.filter((a) => !esStaff(a));
   const personas = new Set(publico.map((a) => a.matricula)).size;
   // la pestaña Juntas regresa a /juntas después de cada acción
-  const q = `?clave=${encodeURIComponent(clave)}${juntas ? "&volver=juntas" : ""}`;
-  // el staff de MIND = quien se ha registrado como staff en algún evento o junta
-  const staffRoster = listaPersonas(todasAsis).filter((p) => p.staff);
+  const q = `${conClave(clave)}${juntas ? "&volver=juntas" : ""}`;
+  // el staff de MIND sale de la lista del portal (Equipo); si aún no existe, de los registros
+  const oficial = staffActivo();
+  const staffRoster = oficial.length
+    ? oficial.map((p) => ({ nombre: p.nombre, matricula: p.matricula, staff: true }))
+    : listaPersonas(todasAsis).filter((p) => p.staff);
   const primerAbierto = evOrden.find((e) => e.abierto)?.id;
   const opcionesEv = evOrden.map((e) =>
     `<option value="${esc(e.id)}"${e.id === primerAbierto ? " selected" : ""}>${esc(fechaBonita(e.fecha))} · ${esc(e.titulo)}${e.abierto ? "" : " (cerrado)"}</option>`).join("");
@@ -461,7 +465,7 @@ export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre
 <td class="acc"><a class="btn sec" href="${wa(`${TIPOS[e.tipo].emoji} ${e.titulo}\nRegistra tu asistencia aquí 👉 ${url}`)}" target="_blank" rel="noopener">WhatsApp</a>
 <button class="btn sec" type="button" onclick="copiar('${esc(url)}',this)">Copiar</button>
 <a class="btn sec" href="/asistencia/${esc(e.id)}/qr" target="_blank">QR</a>
-${juntas ? "" : `<a class="btn sec" href="/galeria?evento=${esc(e.id)}&clave=${encodeURIComponent(clave)}" title="Fotos y videos de este evento">Fotos</a>
+${juntas ? "" : `<a class="btn sec" href="/galeria?evento=${esc(e.id)}${yClave(clave)}" title="Fotos y videos de este evento">Fotos</a>
 <form method="post" action="/eventos/prereg${q}" style="display:inline"><input type="hidden" name="id" value="${esc(e.id)}">
 <button class="btn sec" type="submit" title="Apartar lugares antes del evento">${e.prereg ? "Cerrar prerreg." : "Abrir prerreg."}</button></form>`}
 <form method="post" action="/eventos/alternar${q}" style="display:inline"><input type="hidden" name="id" value="${esc(e.id)}">
@@ -605,7 +609,7 @@ ${juntas ? "" : `<h2>Prerregistro</h2>
 ${abiertos.length ? tarjetasPre : '<p class="vacio">Ningún evento tiene prerregistro abierto. Ábrelo con el botón «Abrir prerreg.» del evento y comparte el enlace para que aparten su lugar.</p>'}
 ${pre.length ? `<div class="tabla-scroll" style="margin-top:10px"><table>
 <tr><th>Cuándo</th><th>Nombre</th><th>Matrícula</th><th>Evento</th><th>Estado</th><th></th></tr>${filasPre}</table></div>
-<p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">«Asistió» se marca solo cuando la persona se registra el día del evento · <a href="/preregistros.csv?clave=${encodeURIComponent(clave)}" style="color:#2E4BC6;font-weight:600">descargar CSV</a></p>` : ""}`}
+<p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">«Asistió» se marca solo cuando la persona se registra el día del evento · <a href="/preregistros.csv${conClave(clave)}" style="color:#2E4BC6;font-weight:600">descargar CSV</a></p>` : ""}`}
 
 <h2>${juntas ? "Pasar lista" : "Registrar asistencia desde aquí"}</h2>
 ${evs.length ? `<form class="tarjeta" method="post" action="/asistencia/manual${q}" id="manual">
@@ -639,7 +643,7 @@ ${evs.length ? `<form class="tarjeta" method="post" action="/asistencia/manual${
   <select id="fstaff"${juntas ? " hidden" : ""}>${juntas ? '<option value="" selected>Todos</option>' : '<option value="no">Solo asistentes</option><option value="si">Solo staff</option><option value="">Asistentes y staff</option>'}</select>
 </div>
 <div class="tabla-scroll"><table class="rank" id="ranking"><thead><tr><th>#</th><th>Persona</th><th>Matrícula</th><th class="num">${juntas ? "Juntas" : "Eventos"}</th><th>${juntas ? "Asistencia" : "Tipos"}</th><th></th></tr></thead><tbody></tbody></table></div>
-<p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">Ranking completo según los filtros de arriba (<b id="nrank">0 personas</b>)${juntas ? "" : " · «Hacer staff» / «Quitar de staff» cambia a la persona en todos sus registros"} · <a id="csv" href="/eventos.csv?clave=${encodeURIComponent(clave)}${juntas ? "&solo=juntas" : ""}" style="color:#2E4BC6;font-weight:600">descargar CSV</a></p>
+<p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">Ranking completo según los filtros de arriba (<b id="nrank">0 personas</b>)${juntas ? "" : " · «Hacer staff» / «Quitar de staff» cambia a la persona en todos sus registros"} · <a id="csv" href="/eventos.csv${conClave(clave)}${juntas ? "&solo=juntas" : ""}" style="color:#2E4BC6;font-weight:600">descargar CSV</a></p>
 <div class="tabla-scroll"><table id="lista"><thead><tr><th>Cuándo</th><th>Nombre</th><th>Matrícula</th><th>${juntas ? "Junta" : "Evento"}</th><th>Tipo</th><th></th></tr></thead><tbody></tbody></table></div>
 <p style="font-size:12px;color:#8A8FB5;margin:6px 0 14px">«Quitar» borra ese registro; si a la persona no le queda ninguno, desaparece del historial.</p>
 ${PUNTOS}
@@ -649,6 +653,7 @@ const TIPOS = ${jsonSeguro(TIPOS)};
 const DATOS = ${jsonSeguro(datos)};
 const PRE = ${jsonSeguro(datosPre)};
 const Q = ${jsonSeguro(q)};
+const STAFF = ${jsonSeguro(staffRoster.map((p) => ({ mat: p.matricula, nombre: p.nombre })))};
 const JUNTAS = ${juntas ? "true" : "false"};
 const TOTAL_EV = ${evs.length};
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -698,6 +703,12 @@ function pinta() {
     p.evs.add(d.ev);
     if (d.tipo) p.tipos.set(d.tipo + '|' + d.tipoNombre, { tipo: d.tipo, nombre: d.tipoNombre });
     p.nombre = d.nombre; p.staff = p.staff || d.staff; por.set(d.mat, p);
+  }
+  // el staff sale completo aunque tenga cero, para saber quién no ha ido
+  if (JUNTAS || st !== 'no') for (const s of STAFF) {
+    if (por.has(s.mat)) continue;
+    if (q && !s.nombre.toLowerCase().includes(q) && !s.mat.toLowerCase().includes(q)) continue;
+    por.set(s.mat, { nombre: s.nombre, mat: s.mat, evs: new Set(), tipos: new Map(), staff: true });
   }
   const sello = (s) => s && !JUNTAS ? '<span class="staff">STAFF</span>' : '';
   const tipoHTML = (tipo, nombre) => TIPOS[tipo]
@@ -758,7 +769,7 @@ export function renderCSVPre(evs: Evento[], pre: Preregistro[], asis: Asistencia
 export function renderConfirmarBorrado(ev: Evento, nAsis: number, nStaff: number, nPre: number,
                                        clave: string): string {
   const junta = esJunta(ev);
-  const q = `?clave=${encodeURIComponent(clave)}${junta ? "&volver=juntas" : ""}`;
+  const q = `${conClave(clave)}${junta ? "&volver=juntas" : ""}`;
   const cosa = junta ? "la junta" : "el evento";
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>¿Borrar ${cosa}? · MIND</title>${FUENTE}
@@ -777,7 +788,7 @@ code{font-family:ui-monospace,monospace;font-size:12px;background:#F3F1E6;paddin
 </ul>
 <form method="post" action="/eventos/borrar${q}" class="acciones">
   <input type="hidden" name="id" value="${esc(ev.id)}"><input type="hidden" name="confirmar" value="si">
-  <a class="btn sec" href="${junta ? "/juntas" : "/eventos"}?clave=${encodeURIComponent(clave)}">Cancelar</a>
+  <a class="btn sec" href="${junta ? "/juntas" : "/eventos"}${conClave(clave)}">Cancelar</a>
   <button class="btn peligro" type="submit">Sí, borrar ${cosa}</button>
 </form></div>${PUNTOS}</main></body></html>`;
 }
