@@ -17,6 +17,7 @@ export interface EventoLite {
 export function navPortal(p: Persona, actual: string, puede: boolean): string {
   const t: [string, string, string][] = [["yo", "/portal", "🙋 Mis tareas"]];
   if (puede) t.push(["tablero", "/tareas", "🗂️ Tablero"], ["semana", "/tareas/semana", "🖼️ Lámina"]);
+  t.push(["awards", "/tareas/awards", "🏆 Awards"]);
   if (esPresidencia(p)) t.push(["equipo", "/tareas/equipo", "👥 Equipo"]);
   const admin = esPresidencia(p)
     ? `<span class="sep"></span><a href="/admin?via=portal">📊 Panel</a><a href="/cuentas?via=portal">💰 Cuentas</a><a href="/eventos?via=portal">🎟️ Eventos</a><a href="/galeria?via=portal">🖼️ Galería</a>`

@@ -28,6 +28,7 @@ import { leerTareas, guardarTareas, crearTarea, conId, actualizar, borrarTarea, 
 import { renderEntrar, renderElegirPin, renderYo, renderTablero, renderTableroLista, renderLamina,
          renderCerrarSemana, renderEquipo } from "./portal";
 import { conClave } from "./ui";
+import { renderAwards, calcularAwards, type Periodo } from "./awards";
 import { slug } from "./products";
 import { notionActivo, espejar, espejarPronto, importarDeNotion, EXT_EVIDENCIA } from "./notion";
 import { leerGaleria, agregarItem, borrarItem, infoEnlace, nuevoId, nombreSeguro, renderGaleria,
@@ -889,6 +890,14 @@ app.get("/tareas/semana", (req, res) => {
   const q = String(req.query.lunes ?? "");
   const lunes = /^\d{4}-\d{2}-\d{2}$/.test(q) ? lunesDe(q) : semanaActual();
   res.type("html").send(renderLamina(p, leerTareas(), areas, leerStaff(), lunes));
+});
+
+app.get("/tareas/awards", (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const q = String(req.query.periodo ?? "");
+  const periodo: Periodo = q === "mes" || q === "semana" ? q : "todo";
+  res.type("html").send(renderAwards(p, periodo));
 });
 
 app.get("/tareas/cerrar-semana", (req, res) => {

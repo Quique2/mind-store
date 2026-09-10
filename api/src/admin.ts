@@ -419,7 +419,7 @@ ${r.preAbiertos.length ? `<div class="accesos">${r.preAbiertos.map((e) =>
     ${tar.porPersona.length ? `<table><tr><th>Persona</th><th>Rol</th><th class="num">Hechas</th><th class="num">%</th></tr>${
       tar.porPersona.slice(0, 12).map((p) => `<tr><td>${esc(p.apodo)}<div class="det">${esc(p.nombre)}</div></td><td>${esc(p.rol)}</td><td class="num">${p.hechas}/${p.total}</td><td class="num"><b>${p.pct}%</b></td></tr>`).join("")
     }</table>` : '<p class="vacio">Sin tareas asignadas todavía.</p>'}
-    <p class="det" style="margin-top:8px"><a href="/tareas/semana" style="color:#2E4BC6;font-weight:600">Ver la lámina de la semana →</a></p></div>
+    <p class="det" style="margin-top:8px"><a href="/tareas/awards" style="color:#2E4BC6;font-weight:600">🏆 Ver los MIND Awards →</a> · <a href="/tareas/semana" style="color:#2E4BC6;font-weight:600">lámina de la semana →</a></p></div>
 </div>
 ${notionActivo() ? `<form method="post" action="/admin/notion/espejo${q}" style="margin-top:10px">
   <button class="btn sec" type="submit">🔄 Actualizar el espejo en Notion</button>
