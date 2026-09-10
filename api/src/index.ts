@@ -956,6 +956,62 @@ app.post("/admin/notion/importar", urlencoded, async (req, res) => {
     res.status(502).type("text/plain; charset=utf-8").send("Error: " + (e instanceof Error ? e.message : String(e)));
   }
 });
+// Carga de golpe la lámina semanal: reemplaza tareas y las liga a sus eventos.
+const CargaSchema = z.object({
+  borrar: z.enum(["notion", "todas", "no"]).optional().default("no"),
+  tareas: z.array(z.object({
+    titulo: z.string().trim().min(3).max(120),
+    detalle: z.string().trim().max(300).optional().default(""),
+    area: z.string().max(40),
+    asignados: z.array(z.string().max(14)).max(40).optional().default([]),
+    evento: z.string().max(12).optional().default(""),
+    estado: z.enum(["pendiente", "curso", "hecha"]).optional().default("pendiente"),
+  })).max(200),
+});
+app.post("/admin/tareas/cargar", (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente.");
+  const parsed = CargaSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).type("text/plain; charset=utf-8")
+      .send(["Datos inválidos:", ...parsed.error.issues.map((i) => `  ${i.path.join(".")}: ${i.message}`)].join("\n"));
+  }
+  const { borrar, tareas } = parsed.data;
+  const areas = leerAreas();
+  const activas = new Set(staffActivo().map((s) => s.matricula));
+  const eventos = leerEventos();
+  const idsEv = new Set(eventos.map((e) => e.id));
+  // se valida TODO antes de tocar nada: o entra completa o no entra
+  const problemas: string[] = [];
+  tareas.forEach((t, i) => {
+    if (!areas.some((a) => a.id === t.area)) problemas.push(`  #${i + 1} «${t.titulo}»: el área "${t.area}" no existe`);
+    for (const m of t.asignados) {
+      if (!activas.has(normMat(m))) problemas.push(`  #${i + 1} «${t.titulo}»: ${m} no está en el staff activo`);
+    }
+    if (t.evento && !idsEv.has(t.evento)) problemas.push(`  #${i + 1} «${t.titulo}»: el evento ${t.evento} no existe`);
+  });
+  if (problemas.length) {
+    return res.status(400).type("text/plain; charset=utf-8").send(["No se cargó nada. Revisa:", ...problemas].join("\n"));
+  }
+  const previas = leerTareas();
+  const quedan = borrar === "todas" ? [] : borrar === "notion" ? previas.filter((t) => !t.origen) : previas;
+  guardarTareas(quedan);
+  const l: string[] = [`Borradas: ${previas.length - quedan.length} · se conservan ${quedan.length}`, ""];
+  for (const t of tareas) {
+    const nueva = crearTarea({
+      titulo: t.titulo, detalle: t.detalle, area: t.area,
+      asignados: [...new Set(t.asignados.map(normMat))],
+      vigencia: t.evento ? { tipo: "evento", evento: t.evento } : { tipo: "transversal" },
+      estado: t.estado, creadaPor: "lamina",
+    });
+    const ev = eventos.find((e) => e.id === t.evento);
+    l.push(`  [${t.area}] ${nueva.titulo}${ev ? " → " + ev.titulo : " → sin evento"}`);
+  }
+  espejarPronto(10);
+  l.push("", `Creadas: ${tareas.length} · total ahora: ${leerTareas().length}`);
+  res.type("text/plain; charset=utf-8").send(l.join("\n"));
+});
+
 app.post("/admin/notion/espejo", urlencoded, async (req, res) => {
   if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const r = await espejar();
