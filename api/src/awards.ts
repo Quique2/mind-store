@@ -17,6 +17,10 @@ export type Orden = "puntos" | "tareas" | "cumple" | "tiempo" | "juntas" | "even
 /** Tareas mínimas para competir en Cumplimiento: sin esto, 1 de 1 sería un 100%. */
 const MIN_CUMPLE = 2;
 
+/** Cuanto pesa cada cosa en los puntos totales. La asistencia pesa mas que las
+ *  tareas: aparecerse a un evento completo cuesta mas que cerrar un pendiente. */
+export const PESOS = { tarea: 5, puntual: 2, junta: 15, evento: 20 };
+
 export interface FilaAward {
   matricula: string; nombre: string; apodo: string; ini: string;
   area: string; color: string; rol: string;
@@ -35,7 +39,7 @@ interface Categoria {
 }
 export const CATEGORIAS: Record<Orden, Categoria> = {
   puntos: {
-    nombre: "Puntos totales", emoji: "🏆", explica: "Todo junto: tareas, puntualidad y asistencia",
+    nombre: "Puntos totales", emoji: "🏆", explica: `Todo junto, pero estar presente pesa mas: un evento vale ${PESOS.evento} pts, una junta ${PESOS.junta}, una tarea cerrada ${PESOS.tarea} y ${PESOS.puntual} extra si fue antes de la fecha`,
     valor: (x) => x.puntos, grande: (x) => `${x.puntos} pts`,
     chico: (x) => `${x.hechas} tarea${x.hechas === 1 ? "" : "s"} · ${x.juntas} junta${x.juntas === 1 ? "" : "s"} · ${x.eventos} evento${x.eventos === 1 ? "" : "s"}`,
   },
@@ -118,7 +122,8 @@ export function calcularAwards(periodo: Periodo) {
       asignadas: suyas.length + prev, hechas: cerradas + prev, vueltas, previas: prev,
       pct: suyas.length + prev ? Math.round(100 * (pctNum + prev) / (suyas.length + prev)) : 0,
       aTiempo: puntual, juntas, eventos: evs,
-      puntos: (cerradas + prev) * 10 + puntual * 3 + juntas * 5 + evs * 8,
+      puntos: (cerradas + prev) * PESOS.tarea + puntual * PESOS.puntual
+        + juntas * PESOS.junta + evs * PESOS.evento,
       medallas: [],
     };
   });

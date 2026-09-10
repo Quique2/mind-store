@@ -30,7 +30,7 @@ import { renderEntrar, renderElegirPin, renderYo, renderTablero, renderTableroLi
          renderCerrarSemana, renderEquipo } from "./portal";
 import { conClave } from "./ui";
 import { renderHistorial, leerTableros, guardarTablero, fotoActual } from "./historial";
-import { renderAwards, CATEGORIAS, type Periodo, type Orden } from "./awards";
+import { renderAwards, calcularAwards, CATEGORIAS, PESOS, type Periodo, type Orden } from "./awards";
 import { slug } from "./products";
 import { notionActivo, espejar, espejarPronto, importarDeNotion, EXT_EVIDENCIA } from "./notion";
 import { leerGaleria, agregarItem, borrarItem, infoEnlace, nuevoId, nombreSeguro, renderGaleria,
@@ -1015,6 +1015,14 @@ app.post("/admin/tableros/cargar", (req, res) => {
   res.type("text/plain; charset=utf-8").send(
     `Tablero de la semana del ${lunesDe(d.semana)} guardado con ${d.tareas.length} tareas.\n` +
     `Semanas en el historial: ${l.map((x) => x.semana).join(", ")}`);
+});
+
+// resumen de los awards en JSON, solo lectura, para revisar los numeros sin entrar al portal
+app.get("/admin/awards.json", (req, res) => {
+  if (!acceso(req)) return res.status(401).json({ error: "Acceso restringido." });
+  const q = String(req.query.periodo ?? "");
+  const periodo: Periodo = q === "mes" || q === "semana" ? q : "todo";
+  res.json({ pesos: PESOS, ...calcularAwards(periodo) });
 });
 
 app.get("/tareas/awards", (req, res) => {
