@@ -142,6 +142,11 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   `eventosLite()` en index.ts es quien manda tipo, color, emoji, hora, lugar y prereg al portal.
 - **Mis tareas** (continúa): calendario mensual con barras por rango, banda
   «Siempre» para transversales y hoja inferior con acciones; pestaña Lista secundaria.
+- **Editar eventos**: `POST /eventos/editar` cambia título, fecha, hora, lugar y nota de un
+  evento ya creado, con formulario desplegable en su fila. La bandera `porConfirmar` marca
+  fecha y lugar como tentativos: `fechaAnuncio()` y `lugarAnuncio()` lo dicen en el formulario
+  público, el prerregistro, el QR y el calendario. Si se mueve la fecha y ya hay gente
+  registrada o prerregistrada, el aviso lo recuerda para que les avisen.
 - **Transversales = recurrentes**: marcarlas hechas apunta una vuelta en `t.vueltas`
   ({semana, ts, por}, una por semana) y al abrir el portal en una semana nueva
   `refrescarRecurrentes()` las reabre solas. Nunca se cierran para siempre.

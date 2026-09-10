@@ -23,6 +23,7 @@ export interface Evento {
   lugar?: string;       // opcional
   nota?: string;        // ponente, detalles… (opcional)
   prereg?: boolean;     // ¿acepta prerregistros? (ausente = no)
+  porConfirmar?: boolean; // fecha y lugar todavía tentativos (p. ej. falta el espacio)
 }
 export interface Asistencia {
   evento: string;       // id del evento
@@ -133,6 +134,30 @@ export function alternarEvento(id: string): Evento | null {
 }
 
 /** Abre o cierra el prerregistro del evento. */
+export interface CambioEvento {
+  titulo?: string; fecha?: string; hora?: string; lugar?: string; nota?: string;
+  porConfirmar?: boolean;
+}
+/** Edita un evento ya creado. Devuelve el evento y qué cambió, para avisar. */
+export function editarEvento(id: string, c: CambioEvento): { evento: Evento; cambios: string[] } | null {
+  const evs = leerEventos();
+  const ev = evs.find((e) => e.id === id);
+  if (!ev) return null;
+  const cambios: string[] = [];
+  const antes = { fecha: ev.fecha, lugar: ev.lugar ?? "", hora: ev.hora ?? "" };
+  if (c.titulo !== undefined && c.titulo.trim()) ev.titulo = limpiar(c.titulo);
+  if (c.fecha && /^\d{4}-\d{2}-\d{2}$/.test(c.fecha)) ev.fecha = c.fecha;
+  ev.hora = c.hora && c.hora.trim() ? c.hora.trim().slice(0, 5) : undefined;
+  ev.lugar = c.lugar && c.lugar.trim() ? limpiar(c.lugar) : undefined;
+  ev.nota = c.nota && c.nota.trim() ? limpiar(c.nota) : undefined;
+  ev.porConfirmar = c.porConfirmar ? true : undefined;
+  if (antes.fecha !== ev.fecha) cambios.push(`fecha ${fechaBonita(antes.fecha)} → ${fechaBonita(ev.fecha)}`);
+  if (antes.lugar !== (ev.lugar ?? "")) cambios.push(`lugar → ${ev.lugar ?? "sin lugar"}`);
+  if (antes.hora !== (ev.hora ?? "")) cambios.push(`hora → ${ev.hora ?? "sin hora"}`);
+  escribirJSON(F_EV, evs);
+  return { evento: ev, cambios };
+}
+
 export function alternarPrereg(id: string): Evento | null {
   const evs = leerEventos();
   const ev = evs.find((e) => e.id === id);
@@ -242,6 +267,11 @@ export function fechaLarga(iso: string): string {
   return `${dias[d.getUTCDay()]} ${d.getUTCDate()} de ${MESES[d.getUTCMonth()]} de ${d.getUTCFullYear()}`;
 }
 export const horaBonita = (h?: string) => (h && /^\d{1,2}:\d{2}$/.test(h) ? `${h} h` : "");
+/** Cómo se anuncia la fecha: si está por confirmar, se dice. */
+export const fechaAnuncio = (ev: Evento) =>
+  `${fechaLarga(ev.fecha)}${ev.hora ? ` · ${horaBonita(ev.hora)}` : ""}${ev.porConfirmar ? " · por confirmar" : ""}`;
+export const lugarAnuncio = (ev: Evento) =>
+  ev.lugar ? `${ev.lugar}${ev.porConfirmar ? " (por confirmar)" : ""}` : (ev.porConfirmar ? "Lugar por definir" : "");
 
 /** Enlace para agregar el evento a Google Calendar (funciona en celular y PC). */
 export function calendarioURL(ev: Evento): string {
@@ -309,9 +339,10 @@ const badgeEv = (e: Evento) =>
   `<span class="tipo" style="background:${TIPOS[e.tipo].color};color:${TIPOS[e.tipo].tinta}">${TIPOS[e.tipo].emoji} ${esc(nombreTipo(e))}</span>`;
 /** Fecha · hora · lugar del evento, para las páginas públicas. */
 const detallesEv = (ev: Evento) => `<div class="datos">
-  <div><span>📅</span><b>${esc(fechaLarga(ev.fecha))}${ev.hora ? ` · ${esc(horaBonita(ev.hora))}` : ""}</b></div>
-  ${ev.lugar ? `<div><span>📍</span><b>${esc(ev.lugar)}</b></div>` : ""}
+  <div><span>📅</span><b>${esc(fechaAnuncio(ev))}</b></div>
+  ${lugarAnuncio(ev) ? `<div><span>📍</span><b>${esc(lugarAnuncio(ev))}</b></div>` : ""}
   ${ev.nota ? `<div><span>ℹ️</span><span>${esc(ev.nota)}</span></div>` : ""}
+  ${ev.porConfirmar ? '<div><span>⚠️</span><span>Fecha y lugar todavía por confirmar: te avisamos si cambian.</span></div>' : ""}
 </div>`;
 
 // ---------------- formulario público de asistencia ----------------
@@ -459,7 +490,7 @@ export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre
     const url = `${base}/asistencia/${e.id}`;
     const nPre = conteoPre.get(e.id) ?? 0;
     return `<tr data-id="${esc(e.id)}"><td>${esc(fechaBonita(e.fecha))}${e.hora ? `<div class="det">${esc(horaBonita(e.hora))}</div>` : ""}</td><td>${badgeEv(e)}</td>
-<td><b>${esc(e.titulo)}</b>${e.lugar ? `<div class="det">📍 ${esc(e.lugar)}</div>` : ""}<div class="det"><code>${esc(url)}</code></div></td>
+<td><b>${esc(e.titulo)}</b>${e.porConfirmar ? ' <span class="est porconf">por confirmar</span>' : ""}${lugarAnuncio(e) ? `<div class="det">📍 ${esc(lugarAnuncio(e))}</div>` : ""}<div class="det"><code>${esc(url)}</code></div></td>
 <td class="num">${cuenta(e.id)}${!juntas && conteoStaff.get(e.id) ? `<div class="det">+${conteoStaff.get(e.id)} staff</div>` : ""}${nPre ? `<div class="det">${nPre} prerreg.</div>` : ""}</td>
 <td>${e.abierto ? '<span class="est abierto">abierto</span>' : '<span class="est cerrado">cerrado</span>'}${e.prereg ? '<div style="margin-top:3px"><span class="est prereg">prerreg.</span></div>' : ""}</td>
 <td class="acc"><a class="btn sec" href="${wa(`${TIPOS[e.tipo].emoji} ${e.titulo}\nRegistra tu asistencia aquí 👉 ${url}`)}" target="_blank" rel="noopener">WhatsApp</a>
@@ -470,7 +501,19 @@ ${juntas ? "" : `<a class="btn sec" href="/galeria?evento=${esc(e.id)}${yClave(c
 <button class="btn sec" type="submit" title="Apartar lugares antes del evento">${e.prereg ? "Cerrar prerreg." : "Abrir prerreg."}</button></form>`}
 <form method="post" action="/eventos/alternar${q}" style="display:inline"><input type="hidden" name="id" value="${esc(e.id)}">
 <button class="btn sec" type="submit">${e.abierto ? "Cerrar" : "Reabrir"}</button></form>
-<a class="btn sec peligro" href="/eventos/borrar${q}&id=${esc(e.id)}" title="Borrar (pide confirmación)">Borrar</a></td></tr>`;
+<button class="btn sec" type="button" onclick="editar('${esc(e.id)}')">Editar</button>
+<a class="btn sec peligro" href="/eventos/borrar${q}&id=${esc(e.id)}" title="Borrar (pide confirmación)">Borrar</a></td></tr>
+<tr class="edicion" id="ed-${esc(e.id)}" hidden><td colspan="6">
+<form method="post" action="/eventos/editar${q}" class="fila">
+  <input type="hidden" name="id" value="${esc(e.id)}">
+  <div style="grid-column:1/-1"><label>Título</label><input name="titulo" value="${esc(e.titulo)}" required maxlength="80"></div>
+  <div><label>Fecha</label><input type="date" name="fecha" value="${esc(e.fecha)}" required></div>
+  <div><label>Hora</label><input type="time" name="hora" value="${esc(e.hora ?? "")}"></div>
+  <div><label>Lugar</label><input name="lugar" value="${esc(e.lugar ?? "")}" maxlength="80" placeholder="p. ej. Ágora de las Artes"></div>
+  <div style="grid-column:1/-1"><label>Nota</label><input name="nota" value="${esc(e.nota ?? "")}" maxlength="80" placeholder="ponente, detalles…"></div>
+  <div class="check"><label><input type="checkbox" name="porConfirmar"${e.porConfirmar ? " checked" : ""}> Fecha y lugar por confirmar</label></div>
+  <div style="align-self:end"><button class="btn" type="submit">Guardar cambios</button></div>
+</form></td></tr>`;
   }).join("");
   const datos = asis.map((a) => {
     const e = evs.find((x) => x.id === a.evento);
@@ -544,6 +587,9 @@ tr:last-child td { border-bottom:none; }
 .est { font-size:11px; font-weight:700; border-radius:999px; padding:2px 9px; }
 .est.abierto { background:#E8F3D9; color:#3F6B10; } .est.cerrado { background:#EEECE3; color:#6A6F98; }
 .est.prereg { background:#F6E4FB; color:#8B21A8; }
+.est.porconf { background:#FDF3D7; color:#8A6A10; }
+tr.edicion td { background:#F4FBFD; }
+tr.edicion input { min-height:38px; font-size:14px; padding:7px 10px; }
 .tabla-scroll { overflow-x:auto; }
 .rank td:first-child { font-weight:800; color:#2E4BC6; width:34px; }
 .filtros { display:grid; grid-template-columns:${juntas ? "2fr 1.6fr" : "2fr 1fr 1.6fr 1fr"}; gap:10px; margin-bottom:10px; }
@@ -670,6 +716,7 @@ function pideNombre() {
 function copiar(url, btn) {
   navigator.clipboard.writeText(url).then(() => { btn.textContent = '✓ copiado'; setTimeout(() => btn.textContent = 'Copiar', 1500); });
 }
+function editar(id) { const f = document.getElementById('ed-' + id); if (f) f.hidden = !f.hidden; }
 // en el formulario de captura: los prerregistrados del evento elegido salen como
 // casillas y quien ya está registrado aparece palomeado y bloqueado
 function pintaRoster() {
@@ -804,7 +851,7 @@ export function renderQR(ev: Evento, svg: string, url: string,
 .grande{font-size:22px;font-weight:800;margin:14px 0 4px}</style></head><body>
 <header><p>${t.emoji} ${esc(nombreTipo(ev))} · ${esc(fechaBonita(ev.fecha))}${ev.hora ? ` · ${esc(horaBonita(ev.hora))}` : ""}</p><h1>${esc(ev.titulo)}</h1></header>
 <main><div class="grande">${pre ? "Escanea y aparta tu lugar" : "Escanea y registra tu asistencia"}</div>
-<p style="color:#6A6F98;font-size:13px;margin-bottom:14px">${pre ? "nombre + matrícula · apartas tu lugar en 10 segundos" : "nombre + matrícula · 10 segundos"}${ev.lugar ? ` · 📍 ${esc(ev.lugar)}` : ""}</p>
+<p style="color:#6A6F98;font-size:13px;margin-bottom:14px">${pre ? "nombre + matrícula · apartas tu lugar en 10 segundos" : "nombre + matrícula · 10 segundos"}${lugarAnuncio(ev) ? ` · 📍 ${esc(lugarAnuncio(ev))}` : ""}</p>
 <div class="qr">${svg}</div>
 <p style="margin-top:12px;font-size:12px;color:#8A8FB5;word-break:break-all">${esc(url)}</p>${PUNTOS}</main></body></html>`;
 }

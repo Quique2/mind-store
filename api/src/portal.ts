@@ -10,6 +10,7 @@ export interface EventoLite {
   id: string; titulo: string; fecha: string;
   tipo?: string; tipoNombre?: string; color?: string; tinta?: string; emoji?: string;
   junta?: boolean; hora?: string; lugar?: string; abierto?: boolean; prereg?: boolean;
+  porConfirmar?: boolean;
 }
 
 // ---------------- navegación ----------------
@@ -249,6 +250,7 @@ export function renderYo(p: Persona, todas: Tarea[], areas: Area[], staff: Perso
       id: e.id, titulo: e.titulo, fecha: e.fecha, hora: e.hora ?? "", lugar: e.lugar ?? "",
       tipo: e.tipoNombre ?? "", emoji: e.emoji ?? "📅", color: e.color ?? "#6A6F98", tinta: e.tinta ?? "#fff",
       junta: Boolean(e.junta), abierto: e.abierto !== false, prereg: Boolean(e.prereg),
+      porConfirmar: Boolean(e.porConfirmar),
       tareas: suyas.map((t) => ({
         id: t.id, titulo: t.titulo, estado: t.estado, mia: tocaA(t, p.matricula),
         area: areas.find((a) => a.id === t.area)?.nombre ?? "Sin área",
@@ -348,7 +350,7 @@ function hojaEvento(id) {
   const e = EVENTOS.find((x) => x.id === id);
   if (!e) return '';
   const f = e.fecha.split('-');
-  const cuando = Number(f[2]) + ' de ' + NOMBRE_DIA[Number(f[1]) - 1] + (e.hora ? ' · ' + e.hora + ' h' : '');
+  const cuando = Number(f[2]) + ' de ' + NOMBRE_DIA[Number(f[1]) - 1] + (e.hora ? ' · ' + e.hora + ' h' : '') + (e.porConfirmar ? ' · por confirmar' : '');
   const filas = e.tareas.map((t) => {
     const gente = t.gente.length
       ? t.gente.map((g) => '<span class="ficha mini-f" style="--c:' + g.color + '"><span class="ava">' + escH(g.ini) + '</span>' + escH(g.apodo) + '</span>').join('')
@@ -361,7 +363,7 @@ function hojaEvento(id) {
   const hechas = e.tareas.filter((t) => t.estado === 'hecha').length;
   return '<div class="ev-cab" style="--c:' + e.color + ';--t:' + e.tinta + '">' +
       '<div class="ev-emoji">' + e.emoji + '</div>' +
-      '<div><b>' + escH(e.titulo) + '</b><small>' + escH(e.tipo) + ' · ' + escH(cuando) + (e.lugar ? ' · 📍 ' + escH(e.lugar) : '') + '</small></div></div>' +
+      '<div><b>' + escH(e.titulo) + '</b><small>' + escH(e.tipo) + ' · ' + escH(cuando) + (e.lugar ? ' · 📍 ' + escH(e.lugar) + (e.porConfirmar ? ' (por confirmar)' : '') : (e.porConfirmar ? ' · 📍 lugar por definir' : '')) + '</small></div></div>' +
     (e.tareas.length
       ? '<p class="det" style="margin:10px 2px">' + e.tareas.length + ' tarea' + (e.tareas.length === 1 ? '' : 's') + ' de este evento · ' + hechas + ' hecha' + (hechas === 1 ? '' : 's') + '</p>' + filas
       : '<p class="vacio" style="margin-top:10px">Todavía no hay tareas ligadas a este evento. En el tablero puedes crear una y elegir «Para un evento».</p>') +

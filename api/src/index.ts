@@ -17,7 +17,7 @@ import { leerEventos, leerAsistencias, crearEvento, alternarEvento, buscarEvento
          renderCSV as renderAsistenciaCSV, borrarEvento, renderConfirmarBorrado, esStaff,
          quitarAsistencia, cambiarStaff, listaPersonas, esJunta, leerPreregistros, preregistrar,
          quitarPrereg, alternarPrereg, renderPreregistro, renderResultadoPre, renderCSVPre,
-         nombreTipo, TIPOS, type TipoId } from "./eventos";
+         nombreTipo, TIPOS, editarEvento, type TipoId } from "./eventos";
 import multer from "multer";
 import { leerStaff, guardarStaff, leerAreas, guardarAreas, buscarPersona, normMat, generarPin,
          ponerPin, pinCorrecto, crearSesion, leerSesion, cookieSesion, cookieBorrar, staffActivo,
@@ -394,6 +394,35 @@ app.post("/eventos/nuevo", express.urlencoded({ extended: false }), (req, res) =
 });
 
 // abrir / cerrar el prerregistro de un evento
+const EditarEventoSchema = z.object({
+  id: z.string().max(12),
+  titulo: z.string().trim().min(2).max(80),
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  hora: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional().or(z.literal("")).default(""),
+  lugar: z.string().max(80).optional().default(""),
+  nota: z.string().max(80).optional().default(""),
+  porConfirmar: z.string().optional(),
+});
+app.post("/eventos/editar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
+  const parsed = EditarEventoSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).send("Datos inv\u00e1lidos. Regresa y revisa el formulario.");
+  const d = parsed.data;
+  if (!idOk(d.id)) return res.redirect(volverEventos(req, "No se encontr\u00f3 ese evento."));
+  const antes = buscarEvento(d.id);
+  const r = editarEvento(d.id, { titulo: d.titulo, fecha: d.fecha, hora: d.hora, lugar: d.lugar,
+                                 nota: d.nota, porConfirmar: d.porConfirmar === "on" });
+  if (!r || !antes) return res.redirect(volverEventos(req, "No se encontr\u00f3 ese evento."));
+  // si movimos la fecha y ya hab\u00eda gente registrada, hay que avisarles
+  const gente = leerAsistencias().filter((a) => a.evento === d.id).length
+    + leerPreregistros().filter((x) => x.evento === d.id).length;
+  const aviso = antes.fecha !== r.evento.fecha && gente
+    ? `\u2713 ${r.evento.titulo}: ${r.cambios.join(" \u00b7 ")} \u2014 ojo: ${gente} persona${gente === 1 ? "" : "s"} ya estaba${gente === 1 ? "" : "n"} registrada${gente === 1 ? "" : "s"}, av\u00edsales del cambio`
+    : `\u2713 ${r.evento.titulo}${r.cambios.length ? ": " + r.cambios.join(" \u00b7 ") : " actualizado"}`;
+  espejarPronto();
+  res.redirect(volverEventos(req, aviso));
+});
+
 app.post("/eventos/prereg", express.urlencoded({ extended: false }), (req, res) => {
   if (!acceso(req)) return res.status(401).send("Acceso restringido.");
   const id = String((req.body as { id?: string }).id ?? "");
@@ -613,7 +642,7 @@ const eventosLite = () => leerEventos()
   .map((e) => ({ id: e.id, titulo: e.titulo, fecha: e.fecha, tipo: e.tipo,
                  tipoNombre: nombreTipo(e), color: TIPOS[e.tipo].color, tinta: TIPOS[e.tipo].tinta,
                  emoji: TIPOS[e.tipo].emoji, junta: esJunta(e), hora: e.hora ?? "", lugar: e.lugar ?? "",
-                 abierto: e.abierto, prereg: Boolean(e.prereg) }));
+                 abierto: e.abierto, prereg: Boolean(e.prereg), porConfirmar: Boolean(e.porConfirmar) }));
 
 app.get("/portal", (req, res) => {
   const p = sesion(req);
