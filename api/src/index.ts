@@ -29,6 +29,7 @@ import { leerTareas, guardarTareas, crearTarea, conId, actualizar, borrarTarea, 
 import { renderEntrar, renderElegirPin, renderYo, renderTablero, renderTableroLista, renderLamina,
          renderCerrarSemana, renderEquipo } from "./portal";
 import { conClave } from "./ui";
+import { renderHistorial, leerTableros, guardarTablero, fotoActual } from "./historial";
 import { renderAwards, CATEGORIAS, type Periodo, type Orden } from "./awards";
 import { slug } from "./products";
 import { notionActivo, espejar, espejarPronto, importarDeNotion, EXT_EVIDENCIA } from "./notion";
@@ -965,6 +966,57 @@ app.get("/tareas/semana", (req, res) => {
   res.type("html").send(renderLamina(p, leerTareas(), areas, leerStaff(), lunes));
 });
 
+app.get("/tareas/historial", (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  if (!puedeAsignar(p, leerAreas())) return res.redirect("/portal");
+  const semana = String(req.query.semana ?? "");
+  res.type("html").send(renderHistorial(p, leerTableros(),
+    /^\d{4}-\d{2}-\d{2}$/.test(semana) ? semana : undefined));
+});
+
+// carga de un tablero viejo (con la clave del panel): valida antes de escribir
+const TableroSchema = z.object({
+  semana: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  nota: z.string().max(120).optional().default(""),
+  tareas: z.array(z.object({
+    titulo: z.string().trim().min(3).max(160),
+    area: z.string().max(40).optional().default(""),
+    quienes: z.array(z.string().max(14)).max(40).optional().default([]),
+    estado: z.enum(["pendiente", "curso", "hecha", "vencida"]).optional().default("pendiente"),
+  })).max(200),
+});
+app.post("/admin/tableros/cargar", (req, res) => {
+  if (!claveOk(req)) return res.status(401).send("Acceso restringido.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente.");
+  const parsed = TableroSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).type("text/plain; charset=utf-8")
+      .send(["Datos inv\u00e1lidos:", ...parsed.error.issues.map((i) => "  " + i.path.join(".") + ": " + i.message)].join("\n"));
+  }
+  const d = parsed.data;
+  const areas = leerAreas();
+  const conocidas = new Set(leerStaff().map((s) => s.matricula));
+  const problemas: string[] = [];
+  d.tareas.forEach((t, i) => {
+    if (t.area && !areas.some((a) => a.id === t.area)) problemas.push(`  #${i + 1} \u00e1rea "${t.area}" no existe`);
+    for (const m of t.quienes) if (!conocidas.has(normMat(m))) problemas.push(`  #${i + 1} ${m} no est\u00e1 en el staff`);
+  });
+  if (problemas.length) {
+    return res.status(400).type("text/plain; charset=utf-8").send(["No se carg\u00f3 nada:", ...problemas].join("\n"));
+  }
+  guardarTablero({
+    semana: lunesDe(d.semana), guardado: new Date().toISOString(), origen: "cargado",
+    ...(d.nota ? { nota: d.nota } : {}),
+    tareas: d.tareas.map((t) => ({ titulo: t.titulo, area: t.area,
+      quienes: [...new Set(t.quienes.map(normMat))], estado: t.estado })),
+  });
+  const l = leerTableros();
+  res.type("text/plain; charset=utf-8").send(
+    `Tablero de la semana del ${lunesDe(d.semana)} guardado con ${d.tareas.length} tareas.\n` +
+    `Semanas en el historial: ${l.map((x) => x.semana).join(", ")}`);
+});
+
 app.get("/tareas/awards", (req, res) => {
   const p = exigeSesion(req, res);
   if (!p) return;
@@ -985,6 +1037,7 @@ app.post("/tareas/cerrar-semana", urlencoded, (req, res) => {
   const p = exigeSesion(req, res);
   if (!p) return;
   if (!esPresidencia(p)) return res.redirect("/tareas");
+  guardarTablero(fotoActual("cierre"));   // la foto se toma antes de mover nada
   const arrastrar = listaDe((req.body as Record<string, unknown>).arrastrar);
   const abiertas = leerTareas().filter(esAbierta).filter((t) => enSemana(t, semanaActual()));
   const vencer = abiertas.map((t) => t.id).filter((id) => !arrastrar.includes(id));

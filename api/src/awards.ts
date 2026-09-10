@@ -6,6 +6,7 @@ import { leerTareas, esAbierta, esc, jsonSeguro, paginaPortal, hoyISO, semanaAct
          esRecurrente, cumplidaEstaSemana, type Tarea } from "./tareas";
 import { leerAsistencias, leerEventos, esJunta } from "./eventos";
 import { navPortal } from "./portal";
+import { cierresConActual } from "./historial";
 
 export type Periodo = "todo" | "mes" | "semana";
 const PERIODOS: Record<Periodo, string> = {
@@ -21,6 +22,7 @@ export interface FilaAward {
   area: string; color: string; rol: string;
   asignadas: number; hechas: number; pct: number; aTiempo: number;
   vueltas: number;   // veces que cumplió una tarea transversal (una por semana)
+  previas: number;   // tareas que cerró en las láminas de semanas anteriores
   juntas: number; eventos: number; puntos: number;
   medallas: string[];
 }
@@ -90,6 +92,7 @@ export function calcularAwards(periodo: Periodo) {
   const fechaEv = new Map(eventos.map((e) => [e.id, e.fecha]));
   const evIdx = new Map(eventos.map((e) => [e.id, e]));
   const asis = leerAsistencias().filter((a) => a.ts.slice(0, 10) >= desde);
+  const previas = cierresConActual(desde);   // lo cerrado en las láminas viejas también cuenta
 
   const filas: FilaAward[] = staff.map((p) => {
     const suyas = tareas.filter((t) => t.asignados.includes(p.matricula)
@@ -107,14 +110,15 @@ export function calcularAwards(periodo: Periodo) {
     const mias = asis.filter((a) => a.matricula === p.matricula);
     const juntas = mias.filter((a) => { const e = evIdx.get(a.evento); return e && esJunta(e); }).length;
     const evs = mias.length - juntas;
+    const prev = previas.get(p.matricula) ?? 0;
     const a = areaDe(p, areas);
     return {
       matricula: p.matricula, nombre: p.nombre, apodo: nombreCorto(p), ini: iniciales(p),
       area: a.nombre, color: a.color, rol: ROLES[p.rol].nombre,
-      asignadas: suyas.length, hechas: cerradas, vueltas,
-      pct: suyas.length ? Math.round(100 * pctNum / suyas.length) : 0,
+      asignadas: suyas.length + prev, hechas: cerradas + prev, vueltas, previas: prev,
+      pct: suyas.length + prev ? Math.round(100 * (pctNum + prev) / (suyas.length + prev)) : 0,
       aTiempo: puntual, juntas, eventos: evs,
-      puntos: cerradas * 10 + puntual * 3 + juntas * 5 + evs * 8,
+      puntos: (cerradas + prev) * 10 + puntual * 3 + juntas * 5 + evs * 8,
       medallas: [],
     };
   });
@@ -128,6 +132,7 @@ export function calcularAwards(periodo: Periodo) {
   }
 
   const totales = {
+    previas: [...previas.values()].reduce((n, x) => n + x, 0),
     tareas: tareas.length,
     hechas: tareas.filter((t) => t.estado === "hecha").length,
     abiertas: tareas.filter(esAbierta).length,
@@ -172,7 +177,7 @@ export function renderAwards(p: Persona, periodo: Periodo, orden: Orden): string
         <div><b>${esc(x.apodo)}</b><small>${esc(x.nombre)}</small>
         <span class="area-chip chico" style="--c:${x.color}">${esc(x.rol)} de ${esc(x.area)}</span></div></div>
         ${x.medallas.length ? `<div class="medallitas">${x.medallas.map((m) => `<span>${esc(m)}</span>`).join("")}</div>` : ""}</td>
-      ${cel(orden === "tareas", `${x.hechas}<small>${x.asignadas ? "de " + x.asignadas : "sin asignar"}${x.vueltas ? " · " + x.vueltas + " de transversales" : ""}</small>`)}
+      ${cel(orden === "tareas", `${x.hechas}<small>${x.asignadas ? "de " + x.asignadas : "sin asignar"}${x.vueltas ? " · " + x.vueltas + " de transversales" : ""}${x.previas ? " · " + x.previas + " de láminas pasadas" : ""}</small>`)}
       ${cel(orden === "cumple", x.asignadas
         ? `<div class="barra"><i style="width:${x.pct}%;background:${x.color}"></i></div><b>${x.pct}%</b>${x.asignadas < MIN_CUMPLE ? '<small>fuera del podio</small>' : ""}`
         : '<span class="guion">—</span>')}
@@ -211,6 +216,7 @@ ${podio.length
   <span><b>${r.totales.hechas}</b> de ${r.totales.tareas} tareas hechas</span>
   <span><b>${r.totales.juntas}</b> juntas</span>
   <span><b>${r.totales.eventos}</b> eventos</span>
+  ${r.totales.previas ? `<span><b>${r.totales.previas}</b> cerradas en láminas pasadas</span>` : ""}
   <span><b>${r.filas.length}</b> personas en el staff</span>
 </div>
 
