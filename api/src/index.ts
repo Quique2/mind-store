@@ -33,8 +33,8 @@ import { leerEnlaces, crearEnlace, editarEnlace, alternarEnlace, moverEnlace, bo
          renderEnlacesPublico, renderEnlacesAdmin, renderBorrarEnlace } from "./enlaces";
 import { renderCarga } from "./carga";
 import { conClave } from "./ui";
-import { renderHistorial, renderHistorialEditor, diffTablero, areasDelCambio,
-         leerTableros, guardarTablero, fotoActual } from "./historial";
+import { renderHistorial, renderHistorialEditor, diffTablero, areasDelCambio, cierresConActual,
+         leerTableros, guardarTablero, fotoActual, type TareaFoto } from "./historial";
 import { renderAwards, calcularAwards, CATEGORIAS, PESOS, type Periodo, type Orden } from "./awards";
 import { slug } from "./products";
 import { notionActivo, espejar, espejarPronto, importarDeNotion, EXT_EVIDENCIA } from "./notion";
@@ -1059,20 +1059,28 @@ app.get("/tareas/historial", (req, res) => {
       return res.redirect(volverPortal(`/tareas/historial${sel ? `?semana=${encodeURIComponent(sel)}` : ""}`,
         "Aquí solo se editan las láminas de semanas pasadas; la de esta semana se edita en el tablero."));
     }
-    return res.type("html").send(renderHistorialEditor(p, tb));
+    return res.type("html").send(renderHistorialEditor(p, tb, eventosLite()));
   }
   res.type("html").send(renderHistorial(p, leerTableros(), sel, avisoDe(req)));
 });
 
 // guardar la lámina editada: valida todo y revisa que pueda mandar en cada área que toca
+const FechaFoto = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).or(z.literal("")).optional();
+const VigFoto = z.object({
+  tipo: z.enum(["fechas", "transversal", "evento"]),
+  inicio: FechaFoto, fin: FechaFoto,
+  evento: z.string().max(12).or(z.literal("")).optional(),
+}).optional();
 const FotoSchema = z.object({
   semana: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   tareas: z.array(z.object({
     ref: z.number().int(),
     titulo: z.string().trim().min(3).max(160),
+    detalle: z.string().trim().max(300).optional(),
     area: z.string().max(40),
     quienes: z.array(z.string().max(14)).max(40),
     estado: z.enum(["pendiente", "curso", "hecha", "vencida"]),
+    vigencia: VigFoto,
   })).max(200),
 });
 app.post("/api/historial/guardar", (req, res) => {
@@ -1089,11 +1097,22 @@ app.post("/api/historial/guardar", (req, res) => {
   const refs = d.tareas.map((t) => t.ref).filter((r) => r >= 0);
   if (new Set(refs).size !== refs.length) return res.status(400).json({ error: "La lámina llegó repetida; recarga la página." });
   const conocidas = new Set(leerStaff().map((x) => x.matricula));
+  const idsEventos = new Set(leerEventos().map((e) => e.id));
   for (const t of d.tareas) {
     if (t.area && !areas.some((a) => a.id === t.area)) return res.status(400).json({ error: `El área "${t.area}" no existe.` });
     for (const m of t.quienes) if (!conocidas.has(normMat(m))) return res.status(400).json({ error: `${m} no está en el staff.` });
+    if (t.vigencia?.evento && !idsEventos.has(t.vigencia.evento)) return res.status(400).json({ error: "Ese evento ya no existe." });
   }
-  const cambios = diffTablero(viejo, d.tareas);
+  const limpia = (t: (typeof d.tareas)[number]): TareaFoto => {
+    const v = t.vigencia;
+    const vig = v
+      ? { tipo: v.tipo, ...(v.inicio ? { inicio: v.inicio } : {}), ...(v.fin ? { fin: v.fin } : {}),
+          ...(v.evento ? { evento: v.evento } : {}) }
+      : undefined;
+    return { titulo: t.titulo, area: t.area, quienes: [...new Set(t.quienes.map(normMat))], estado: t.estado,
+             ...(t.detalle ? { detalle: t.detalle } : {}), ...(vig ? { vigencia: vig } : {}) };
+  };
+  const cambios = diffTablero(viejo, d.tareas.map((t) => ({ ...limpia(t), ref: t.ref })));
   if (!cambios.length) return res.json({ aviso: "No había nada que cambiar." });
   for (const cambio of cambios) {
     for (const a of areasDelCambio(cambio)) {
@@ -1105,10 +1124,10 @@ app.post("/api/historial/guardar", (req, res) => {
   const ahora = new Date().toISOString();
   guardarTablero({
     ...viejo, guardado: ahora, editadoPor: p.matricula, editadoEl: ahora,
-    tareas: d.tareas.map((t) => ({ titulo: t.titulo, area: t.area,
-      quienes: [...new Set(t.quienes.map(normMat))], estado: t.estado })),
+    tareas: d.tareas.map(limpia),
   });
-  res.json({ aviso: `\u2713 Lámina guardada con ${cambios.length} cambio${cambios.length === 1 ? "" : "s"}` });
+  // los creditos ya recalculados, para que el editor se refresque sin recargar
+  res.json({ creditos: Object.fromEntries(cierresConActual()), aviso: `\u2713 Lámina guardada con ${cambios.length} cambio${cambios.length === 1 ? "" : "s"}` });
 });
 
 // carga de un tablero viejo (con la clave del panel): valida antes de escribir
@@ -1117,9 +1136,11 @@ const TableroSchema = z.object({
   nota: z.string().max(120).optional().default(""),
   tareas: z.array(z.object({
     titulo: z.string().trim().min(3).max(160),
+    detalle: z.string().trim().max(300).optional(),
     area: z.string().max(40).optional().default(""),
     quienes: z.array(z.string().max(14)).max(40).optional().default([]),
     estado: z.enum(["pendiente", "curso", "hecha", "vencida"]).optional().default("pendiente"),
+    vigencia: VigFoto,
   })).max(200),
 });
 app.post("/admin/tableros/cargar", (req, res) => {
@@ -1145,7 +1166,9 @@ app.post("/admin/tableros/cargar", (req, res) => {
     semana: lunesDe(d.semana), guardado: new Date().toISOString(), origen: "cargado",
     ...(d.nota ? { nota: d.nota } : {}),
     tareas: d.tareas.map((t) => ({ titulo: t.titulo, area: t.area,
-      quienes: [...new Set(t.quienes.map(normMat))], estado: t.estado })),
+      quienes: [...new Set(t.quienes.map(normMat))], estado: t.estado,
+      ...(t.detalle ? { detalle: t.detalle } : {}),
+      ...(t.vigencia ? { vigencia: t.vigencia } : {}) })),
   });
   const l = leerTableros();
   res.type("text/plain; charset=utf-8").send(

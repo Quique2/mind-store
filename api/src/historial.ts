@@ -7,12 +7,15 @@ import { areaDe, iniciales, leerAreas, nombreCorto, puedeAsignar, staffActivo, l
 import { esAbierta, esc, jsonSeguro, paginaPortal, leerTareas, quienes, rangoSemana,
          semanaActual, lunesDe, ESTADOS, type Tarea } from "./tareas";
 import { navPortal, CSS_PANEL, CSS_CAL, CSS_KANBAN } from "./portal";
+import type { EventoLite } from "./portal";
 
 export interface TareaFoto {
   titulo: string;
   area: string;              // id de área, "" si no tenía
   quienes: string[];         // matrículas
   estado: "pendiente" | "curso" | "hecha" | "vencida";
+  detalle?: string;
+  vigencia?: { tipo: "fechas" | "transversal" | "evento"; inicio?: string; fin?: string; evento?: string };
 }
 export interface Tablero {
   semana: string;            // lunes de esa semana
@@ -50,6 +53,8 @@ export function fotoActual(origen: Tablero["origen"] = "cierre", semana = semana
     semana, guardado: new Date().toISOString(), origen,
     tareas: leerTareas().map((t) => ({
       titulo: t.titulo, area: t.area, quienes: [...t.asignados], estado: t.estado,
+      ...(t.detalle ? { detalle: t.detalle } : {}),
+      vigencia: { ...t.vigencia },
     })),
   };
 }
@@ -259,6 +264,9 @@ export interface CambioFoto {
 }
 const mismaGente = (a: string[], b: string[]) =>
   [...a].sort().join(",") === [...b].sort().join(",");
+/** La vigencia en una sola cadena, para comparar sin depender del orden de las llaves. */
+export const vigTexto = (v?: TareaFoto["vigencia"]) =>
+  !v ? "" : [v.tipo, v.inicio ?? "", v.fin ?? "", v.evento ?? ""].join("|");
 
 /** Qué cambió entre el tablero guardado y lo que manda el editor. */
 export function diffTablero(viejo: Tablero, nuevas: (TareaFoto & { ref: number })[]): CambioFoto[] {
@@ -268,7 +276,10 @@ export function diffTablero(viejo: Tablero, nuevas: (TareaFoto & { ref: number }
     if (n.ref < 0 || n.ref >= viejo.tareas.length) { out.push({ tipo: "alta", ref: -1, ahora: n }); continue; }
     vistos.add(n.ref);
     const v = viejo.tareas[n.ref];
-    if (v.titulo !== n.titulo || v.area !== n.area || v.estado !== n.estado || !mismaGente(v.quienes, n.quienes)) {
+    if (v.titulo !== n.titulo || v.area !== n.area || v.estado !== n.estado
+        || (v.detalle ?? "") !== (n.detalle ?? "")
+        || vigTexto(v.vigencia) !== vigTexto(n.vigencia)
+        || !mismaGente(v.quienes, n.quienes)) {
       out.push({ tipo: "cambio", ref: n.ref, antes: v, ahora: n });
     }
   }
@@ -280,7 +291,7 @@ export const areasDelCambio = (c: CambioFoto): string[] =>
   [...new Set([c.antes?.area, c.ahora?.area].filter((a): a is string => typeof a === "string"))];
 
 // ---------------- vista de edición, igualita al tablero ----------------
-export function renderHistorialEditor(p: Persona, tb: Tablero): string {
+export function renderHistorialEditor(p: Persona, tb: Tablero, eventos: EventoLite[]): string {
   const areas = leerAreas();
   const staff = staffActivo();
   const puedeTodo = esPresidencia(p);
@@ -290,8 +301,14 @@ export function renderHistorialEditor(p: Persona, tb: Tablero): string {
     areas: areas.map((a) => ({ id: a.id, nombre: a.nombre, color: a.color, tinta: a.tinta, emoji: a.emoji })),
     staff: [...staff].sort((a, b) => nombreCorto(a).localeCompare(nombreCorto(b), "es"))
       .map((s) => ({ mat: s.matricula, apodo: nombreCorto(s), ini: iniciales(s), color: areaDe(s, areas).color })),
+    eventos: eventos.map((e) => ({ id: e.id, titulo: e.titulo, fecha: e.fecha })),
     estados: ESTADOS,
-    tareas: tb.tareas.map((t, i) => ({ ref: i, titulo: t.titulo, area: t.area, quienes: [...t.quienes], estado: t.estado })),
+    creditos: Object.fromEntries(cierresConActual()),
+    tareas: tb.tareas.map((t, i) => ({
+      ref: i, titulo: t.titulo, detalle: t.detalle ?? "", area: t.area,
+      quienes: [...t.quienes], estado: t.estado,
+      vigencia: t.vigencia ? { ...t.vigencia } : { tipo: "fechas" as const },
+    })),
   };
   const cuerpo = `
 <div class="vistas">
@@ -304,16 +321,20 @@ export function renderHistorialEditor(p: Persona, tb: Tablero): string {
   <button type="button" class="btn mini" id="btn-guardar" disabled>Guardar cambios</button>
 </div>
 <div class="pool" id="pool"></div>
-<p class="ayuda" id="ayuda">Arrastra una persona a una tarea para dársela. En celular: toca la persona y luego la tarea. Toca la tarjeta para editarla.</p>
-<div class="tablero" id="tablero"></div>
+<p class="ayuda" id="ayuda">Arrastra una persona a una tarea para dársela. En celular: toca la persona y luego la tarea. Toca la tarjeta para editarla completa.</p>
+<div class="zona-edit">
+  <div class="tablero" id="tablero"></div>
+  <aside class="resumen-edit" id="resumen-edit"></aside>
+</div>
 <div id="hoja" class="hoja" hidden><div class="hoja-caja"><button class="cerrar" type="button" onclick="cerrarHoja()">✕</button><div id="hoja-cuerpo"></div></div></div>
 <div id="aviso-flotante" class="flotante" hidden></div>
 <script>
 const E = ${jsonSeguro(datos)};
-const ORIG = ${jsonSeguro(datos.tareas)};
+let ORIG = JSON.parse(JSON.stringify(E.tareas));
 let sel = null;
 let arrastrando = null;
-let guardando = false;
+let saliendo = false;
+let siguienteNueva = -1;          // las nuevas llevan ref negativo para distinguirlas
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const persona = (m) => E.staff.find((s) => s.mat === m);
@@ -322,24 +343,34 @@ const puedo = (areaId) => E.yo.presidencia || E.yo.areas.includes(areaId);
 const nom = (m) => { const s = persona(m); return s ? s.apodo : m; };
 const gente = (l) => (l.length ? l.map(nom).join(', ') : 'nadie');
 const areaN = (id) => { const a = area(id); return a ? a.nombre : 'sin área'; };
-let siguienteNueva = -1;   // las nuevas llevan ref negativo para distinguirlas
-
+const fechaCorta = (f) => { const [, m, d] = f.split('-').map(Number); return d + ' ' + ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'][m - 1]; };
+function cuando(t) {
+  const v = t.vigencia || { tipo: 'fechas' };
+  if (v.tipo === 'transversal') return 'Transversal';
+  if (v.tipo === 'evento') { const e = E.eventos.find((x) => x.id === v.evento); return e ? 'Para ' + e.titulo : 'Para un evento'; }
+  if (v.inicio && v.fin) return fechaCorta(v.inicio) + ' → ' + fechaCorta(v.fin);
+  if (v.fin) return 'Hasta ' + fechaCorta(v.fin);
+  if (v.inicio) return 'Desde ' + fechaCorta(v.inicio);
+  return 'Sin fecha';
+}
 function avisa(txt, mal) {
   const a = $('#aviso-flotante'); a.textContent = txt; a.className = 'flotante' + (mal ? ' mal' : ''); a.hidden = false;
-  clearTimeout(avisa.t); avisa.t = setTimeout(() => { a.hidden = true; }, 2600);
+  clearTimeout(avisa.t); avisa.t = setTimeout(() => { a.hidden = true; }, 3000);
 }
 // ---- qué cambió ----
+const vig = (v) => (v ? [v.tipo, v.inicio || '', v.fin || '', v.evento || ''].join('|') : '');
 function cambios() {
   const out = []; const vistos = new Set();
   for (const t of E.tareas) {
     if (t.ref < 0) { out.push({ tipo: 'alta', ahora: t }); continue; }
     vistos.add(t.ref);
-    const v = ORIG[t.ref]; if (!v) continue;
+    const v = ORIG.find((x) => x.ref === t.ref); if (!v) continue;
     const igualGente = [...v.quienes].sort().join(',') === [...t.quienes].sort().join(',');
-    if (v.titulo !== t.titulo || v.area !== t.area || v.estado !== t.estado || !igualGente)
+    if (v.titulo !== t.titulo || v.area !== t.area || v.estado !== t.estado
+        || (v.detalle || '') !== (t.detalle || '') || vig(v.vigencia) !== vig(t.vigencia) || !igualGente)
       out.push({ tipo: 'cambio', antes: v, ahora: t });
   }
-  ORIG.forEach((v, i) => { if (!vistos.has(i)) out.push({ tipo: 'baja', antes: v }); });
+  ORIG.forEach((v) => { if (!vistos.has(v.ref)) out.push({ tipo: 'baja', antes: v }); });
   return out;
 }
 function describe(c) {
@@ -349,6 +380,8 @@ function describe(c) {
   if (c.antes.titulo !== c.ahora.titulo) partes.push('nombre: «' + esc(c.antes.titulo) + '» → «' + esc(c.ahora.titulo) + '»');
   if (c.antes.area !== c.ahora.area) partes.push('área: ' + esc(areaN(c.antes.area)) + ' → ' + esc(areaN(c.ahora.area)));
   if (c.antes.estado !== c.ahora.estado) partes.push('estado: ' + esc(E.estados[c.antes.estado].nombre) + ' → ' + esc(E.estados[c.ahora.estado].nombre));
+  if (vig(c.antes.vigencia) !== vig(c.ahora.vigencia)) partes.push('cuándo: ' + esc(cuando(c.antes)) + ' → ' + esc(cuando(c.ahora)));
+  if ((c.antes.detalle || '') !== (c.ahora.detalle || '')) partes.push('cambia el detalle');
   if ([...c.antes.quienes].sort().join(',') !== [...c.ahora.quienes].sort().join(','))
     partes.push('quién la hace: ' + esc(gente(c.antes.quienes)) + ' → ' + esc(gente(c.ahora.quienes)));
   return ['✏️ ' + esc(c.ahora.titulo), partes.join(' · ')];
@@ -360,20 +393,46 @@ function refrescaBarra() {
   $('#btn-guardar').disabled = !n;
   $('#btn-descartar').disabled = !n;
 }
-window.addEventListener('beforeunload', (e) => { if (!guardando && cambios().length) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', (e) => { if (!saliendo && cambios().length) { e.preventDefault(); e.returnValue = ''; } });
 
+// ---- resumen vivo: cómo va quedando el reparto ----
+function pintaResumen() {
+  const cuenta = new Map();
+  let sinNombre = 0, hechas = 0;
+  for (const t of E.tareas) {
+    if (t.estado === 'hecha') hechas++;
+    if (!t.quienes.length) { sinNombre++; continue; }
+    for (const m of t.quienes) {
+      const c = cuenta.get(m) || { trae: 0, hechas: 0 };
+      c.trae++; if (t.estado === 'hecha') c.hechas++;
+      cuenta.set(m, c);
+    }
+  }
+  const filas = [...cuenta.entries()].sort((a, b) => b[1].trae - a[1].trae || nom(a[0]).localeCompare(nom(b[0]), 'es'));
+  $('#resumen-edit').innerHTML =
+    '<h3>Cómo va quedando</h3>' +
+    '<p class="rr-tot"><b>' + E.tareas.length + '</b> tareas · <b>' + hechas + '</b> hechas' + (sinNombre ? ' · <b>' + sinNombre + '</b> sin nombre' : '') + '</p>' +
+    (filas.length ? '<ul class="rr">' + filas.map(([m, c]) => {
+      const s = persona(m); const cred = E.creditos[m] || 0;
+      return '<li><span class="ava chica" style="--c:' + (s ? s.color : '#6A6F98') + '">' + esc(s ? s.ini : '??') + '</span>' +
+        '<span class="rr-n">' + esc(nom(m)) + '<i>' + cred + ' acreditadas en el historial</i></span>' +
+        '<span class="rr-c"><b>' + c.trae + '</b><small>' + c.hechas + ' hechas</small></span></li>';
+    }).join('') + '</ul>' : '<p class="rr-vacio">Nadie tiene tareas en esta lámina todavía.</p>') +
+    '<p class="rr-pie">Lo de arriba es esta lámina. «Acreditadas» son las cerradas que ya te cuentan en los Awards, y se actualiza al guardar.</p>';
+}
 // ---- pool de personas ----
 function pintaPool() {
   $('#pool').innerHTML = E.staff.map((s) => '<button type="button" class="ficha' + (sel === s.mat ? ' sel' : '') + '" draggable="true" data-mat="' + esc(s.mat) + '" style="--c:' + s.color + '"><span class="ava">' + esc(s.ini) + '</span><span>' + esc(s.apodo) + '</span></button>').join('');
   $('#pool').querySelectorAll('.ficha').forEach((f) => {
     f.addEventListener('click', () => { sel = sel === f.dataset.mat ? null : f.dataset.mat; pintaPool(); pinta();
-      $('#ayuda').textContent = sel ? 'Toca una tarea para dársela a ' + persona(sel).apodo + '. Toca otra vez la ficha para soltar.' : 'Arrastra una persona a una tarea para dársela. Toca la tarjeta para editarla.'; });
+      $('#ayuda').textContent = sel ? 'Toca una tarea para dársela a ' + persona(sel).apodo + '. Toca otra vez la ficha para soltar.' : 'Arrastra una persona a una tarea para dársela. Toca la tarjeta para editarla completa.'; });
     f.addEventListener('dragstart', (e) => { arrastrando = 'mat'; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('text/plain', 'mat:' + f.dataset.mat); });
     f.addEventListener('dragend', () => { arrastrando = null; });
   });
 }
 // ---- tablero ----
 const clave = (t) => (t.ref < 0 ? 'n' : 'v') + Math.abs(t.ref);
+const busca = (k) => E.tareas.find((x) => clave(x) === k);
 function tarjetaHTML(t) {
   const g = t.quienes.map(persona).filter(Boolean);
   const dim = sel && !t.quienes.includes(sel);
@@ -383,16 +442,19 @@ function tarjetaHTML(t) {
     : '<span class="todos">SIN NOMBRE</span>';
   return '<article class="card est-' + t.estado + (dim ? ' dim' : '') + (sel && t.quienes.includes(sel) ? ' foco' : '') + (t.ref < 0 ? ' nueva' : '') + '" data-k="' + clave(t) + '" draggable="' + (mio ? 'true' : 'false') + '">' +
     '<div class="card-tit">' + esc(t.titulo) + '</div>' +
-    '<div class="card-meta"><span class="dot" title="' + esc(E.estados[t.estado].nombre) + '"></span><span>' + esc(E.estados[t.estado].nombre) + '</span>' + (t.ref < 0 ? '<span>nueva</span>' : '') + '</div>' +
+    '<div class="card-meta"><span class="dot" title="' + esc(E.estados[t.estado].nombre) + '"></span><span>' + esc(E.estados[t.estado].nombre) + '</span><span>· ' + esc(cuando(t)) + '</span>' +
+      (t.detalle ? '<span title="' + esc(t.detalle) + '">📝</span>' : '') + (t.ref < 0 ? '<span>nueva</span>' : '') + '</div>' +
     '<div class="card-gente">' + avatares + '</div>' +
     (mio ? '<button type="button" class="mas" data-abrir="' + clave(t) + '" title="Editar">···</button>' : '') + '</article>';
 }
+function refresca() { pinta(); pintaResumen(); refrescaBarra(); }
 function pinta() {
   const cols = [...E.areas, { id: '', nombre: 'Sin área', color: '#6A6F98', emoji: '•' }];
   $('#tablero').innerHTML = cols.map((a) => {
     const suyas = E.tareas.filter((t) => (t.area || '') === a.id);
     if (!a.id && !suyas.length) return '';
-    return '<section class="col" data-area="' + esc(a.id) + '"><h3><span class="punto" style="background:' + a.color + '"></span>' + esc(a.emoji + ' ' + a.nombre) + ' <small>' + suyas.length + '</small></h3>' +
+    const hechas = suyas.filter((t) => t.estado === 'hecha').length;
+    return '<section class="col" data-area="' + esc(a.id) + '"><h3><span class="punto" style="background:' + a.color + '"></span>' + esc(a.emoji + ' ' + a.nombre) + ' <small>' + suyas.length + (hechas ? ' · ' + hechas + ' ✓' : '') + '</small></h3>' +
       '<div class="cards">' + suyas.map(tarjetaHTML).join('') + '</div>' +
       (puedo(a.id) && a.id ? '<form class="rapida" data-area="' + esc(a.id) + '"><input name="titulo" placeholder="+ agregar a la lámina" maxlength="160" autocomplete="off"></form>' : '') +
       '</section>';
@@ -401,16 +463,16 @@ function pinta() {
     e.preventDefault();
     const inp = f.querySelector('input'); const titulo = inp.value.trim();
     if (titulo.length < 3) { avisa('Escribe al menos tres letras.', true); return; }
-    E.tareas.push({ ref: siguienteNueva--, titulo, area: f.dataset.area, quienes: [], estado: 'pendiente' });
-    inp.value = ''; pinta(); refrescaBarra();
+    E.tareas.push({ ref: siguienteNueva--, titulo, detalle: '', area: f.dataset.area, quienes: [], estado: 'pendiente', vigencia: { tipo: 'fechas' } });
+    inp.value = ''; refresca();
     const n = document.querySelector('.rapida[data-area="' + f.dataset.area + '"] input'); if (n) n.focus();
   }));
   document.querySelectorAll('.card').forEach((c) => {
     const k = c.dataset.k;
-    const t = E.tareas.find((x) => clave(x) === k);
     c.addEventListener('click', (e) => {
+      const t = busca(k); if (!t) return;
       const q = e.target.closest('[data-quitar]');
-      if (q) { e.stopPropagation(); if (!puedo(t.area)) return; t.quienes = t.quienes.filter((m) => m !== q.dataset.quitar); pinta(); refrescaBarra(); return; }
+      if (q) { e.stopPropagation(); if (!puedo(t.area)) return; t.quienes = t.quienes.filter((m) => m !== q.dataset.quitar); refresca(); return; }
       if (e.target.closest('[data-abrir]')) { e.stopPropagation(); abrirDetalle(k); return; }
       if (sel) { da(k, sel); return; }
       if (puedo(t.area)) abrirDetalle(k);
@@ -428,48 +490,66 @@ function pinta() {
       const d = e.dataTransfer.getData('text/plain') || ''; col.classList.remove('sobre');
       if (!d.startsWith('tarea:')) return;
       e.preventDefault();
-      const t = E.tareas.find((x) => clave(x) === d.slice(6)); const destino = col.dataset.area;
+      const t = busca(d.slice(6)); const destino = col.dataset.area;
       if (!t || t.area === destino) return;
       if (!destino) { avisa('Suéltala en un área con nombre.', true); return; }
       if (!puedo(t.area) || !puedo(destino)) { avisa('No puedes mover tareas entre esas áreas.', true); return; }
-      t.area = destino; pinta(); refrescaBarra(); avisa('Movida a ' + areaN(destino));
+      t.area = destino; refresca(); avisa('Movida a ' + areaN(destino));
     });
   });
 }
 function da(k, mat) {
-  const t = E.tareas.find((x) => clave(x) === k);
+  const t = busca(k); if (!t) return;
   if (!puedo(t.area)) { avisa('No puedes tocar tareas de ' + areaN(t.area) + '.', true); return; }
   if (t.quienes.includes(mat)) { avisa(nom(mat) + ' ya está en esa tarea.'); return; }
-  t.quienes.push(mat); pinta(); refrescaBarra(); avisa('✓ ' + nom(mat) + ' → ' + t.titulo);
+  t.quienes.push(mat); refresca(); avisa('✓ ' + nom(mat) + ' → ' + t.titulo);
 }
-// ---- hoja de detalle ----
+// ---- hoja de detalle: los mismos campos que el tablero ----
 function abrirDetalle(k) {
-  const t = E.tareas.find((x) => clave(x) === k); if (!t || !puedo(t.area)) return;
-  const est = (v) => '<button type="button" class="btn ' + (v === 'hecha' ? 'ok' : v === 'vencida' ? 'sec peligro' : 'sec') + ' mini" data-est="' + v + '"' + (t.estado === v ? ' disabled' : '') + '>' + esc(E.estados[v].nombre) + '</button>';
-  abrirHoja('<div class="hoja-item"><b>Editar en la lámina</b>' +
-    '<form class="fila" id="f-foto">' +
-    '<div style="grid-column:1/-1"><label>Tarea</label><input name="titulo" value="' + esc(t.titulo) + '" maxlength="160" required></div>' +
-    '<div style="grid-column:1/-1"><label>Área</label><select name="area">' + E.areas.filter((x) => puedo(x.id)).map((x) => '<option value="' + x.id + '"' + (x.id === t.area ? ' selected' : '') + '>' + esc(x.emoji + ' ' + x.nombre) + '</option>').join('') + '</select></div>' +
-    '</form>' +
+  const t = busca(k); if (!t || !puedo(t.area)) return;
+  const v = t.vigencia || { tipo: 'fechas' };
+  const est = (x) => '<button type="button" class="btn ' + (x === 'hecha' ? 'ok' : x === 'vencida' ? 'sec peligro' : 'sec') + ' mini" data-est="' + x + '"' + (t.estado === x ? ' disabled' : '') + '>' + esc(E.estados[x].nombre) + '</button>';
+  abrirHoja('<div class="hoja-item"><b>' + esc(t.titulo) + '</b>' +
+    '<div class="meta"><span class="chip" style="background:' + (area(t.area) ? area(t.area).color : '#6A6F98') + ';color:' + (area(t.area) ? area(t.area).tinta : '#fff') + '">' + esc(area(t.area) ? area(t.area).emoji + ' ' + area(t.area).nombre : 'Sin área') + '</span> ' +
+      '<span class="chip" style="background:' + E.estados[t.estado].color + ';color:' + E.estados[t.estado].tinta + '">' + esc(E.estados[t.estado].nombre) + '</span> <span>' + esc(cuando(t)) + '</span></div>' +
     '<div class="acc">' + ['pendiente', 'curso', 'hecha', 'vencida'].map(est).join('') + '</div>' +
+    '<form class="fila" id="f-foto" style="margin-top:12px">' +
+    '<div style="grid-column:1/-1"><label>Tarea</label><input name="titulo" value="' + esc(t.titulo) + '" maxlength="160" required></div>' +
+    '<div style="grid-column:1/-1"><label>Detalle</label><input name="detalle" value="' + esc(t.detalle || '') + '" maxlength="300"></div>' +
+    '<div><label>Cuándo</label><select name="tipo"><option value="fechas"' + (v.tipo === 'fechas' ? ' selected' : '') + '>Con fechas</option><option value="transversal"' + (v.tipo === 'transversal' ? ' selected' : '') + '>Transversal</option><option value="evento"' + (v.tipo === 'evento' ? ' selected' : '') + '>Para un evento</option></select></div>' +
+    '<div><label>Área</label><select name="area">' + E.areas.filter((x) => puedo(x.id)).map((x) => '<option value="' + x.id + '"' + (x.id === t.area ? ' selected' : '') + '>' + esc(x.emoji + ' ' + x.nombre) + '</option>').join('') + '</select></div>' +
+    '<div><label>Del</label><input type="date" name="inicio" value="' + esc(v.inicio || '') + '"></div>' +
+    '<div><label>Al</label><input type="date" name="fin" value="' + esc(v.fin || '') + '"></div>' +
+    '<div style="grid-column:1/-1"><label>Evento</label><select name="evento"><option value="">(ninguno)</option>' + E.eventos.map((e) => '<option value="' + esc(e.id) + '"' + (e.id === v.evento ? ' selected' : '') + '>' + esc(e.titulo + ' · ' + fechaCorta(e.fecha)) + '</option>').join('') + '</select></div>' +
+    '</form>' +
     '<div class="gente-lista" style="margin-top:10px">' + (t.quienes.length ? t.quienes.map(persona).filter(Boolean).map((s) => '<span class="ficha mini-f" style="--c:' + s.color + '"><span class="ava">' + esc(s.ini) + '</span>' + esc(s.apodo) + ' <i data-quitar="' + esc(s.mat) + '">✕</i></span>').join('') : '<span class="todos">SIN NOMBRE</span>') + '</div>' +
     '<p class="det" style="margin-top:8px">Quien aparezca aquí es a quien se le acredita esta tarea en los Awards.</p>' +
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn" type="button" id="b-ok">Aplicar</button>' +
     '<button class="btn sec peligro" type="button" id="b-quitar">Quitar de la lámina</button></div></div>');
   const h = $('#hoja-cuerpo');
-  h.querySelectorAll('[data-est]').forEach((b) => b.addEventListener('click', () => { t.estado = b.dataset.est; pinta(); refrescaBarra(); abrirDetalle(k); }));
-  h.querySelectorAll('[data-quitar]').forEach((i) => i.addEventListener('click', () => { t.quienes = t.quienes.filter((m) => m !== i.dataset.quitar); pinta(); refrescaBarra(); abrirDetalle(k); }));
-  $('#b-ok').addEventListener('click', () => {
-    const d = new FormData($('#f-foto'));
-    const titulo = String(d.get('titulo') || '').trim();
-    if (titulo.length < 3) { avisa('El nombre necesita al menos tres letras.', true); return; }
-    t.titulo = titulo; t.area = d.get('area');
-    pinta(); refrescaBarra(); cerrarHoja();
-  });
+  h.querySelectorAll('[data-est]').forEach((b) => b.addEventListener('click', () => { aplica(k); t.estado = b.dataset.est; refresca(); abrirDetalle(k); }));
+  h.querySelectorAll('[data-quitar]').forEach((i) => i.addEventListener('click', () => { aplica(k); t.quienes = t.quienes.filter((m) => m !== i.dataset.quitar); refresca(); abrirDetalle(k); }));
+  $('#b-ok').addEventListener('click', () => { if (aplica(k)) { refresca(); cerrarHoja(); } });
   $('#b-quitar').addEventListener('click', () => {
     E.tareas = E.tareas.filter((x) => clave(x) !== k);
-    pinta(); refrescaBarra(); cerrarHoja(); avisa('Quitada de la lámina (aún sin guardar)');
+    refresca(); cerrarHoja(); avisa('Quitada de la lámina (aún sin guardar)');
   });
+}
+/** Pasa lo que está escrito en la hoja a la tarea, sin guardar en el servidor. */
+function aplica(k) {
+  const t = busca(k); const f = $('#f-foto'); if (!t || !f) return false;
+  const d = new FormData(f);
+  const titulo = String(d.get('titulo') || '').trim();
+  if (titulo.length < 3) { avisa('El nombre necesita al menos tres letras.', true); return false; }
+  t.titulo = titulo;
+  t.detalle = String(d.get('detalle') || '').trim();
+  t.area = d.get('area');
+  const tipo = d.get('tipo');
+  const nueva = { tipo };
+  if (tipo === 'fechas') { if (d.get('inicio')) nueva.inicio = d.get('inicio'); if (d.get('fin')) nueva.fin = d.get('fin'); }
+  if (tipo === 'evento') { if (d.get('evento')) nueva.evento = d.get('evento'); }
+  t.vigencia = nueva;
+  return true;
 }
 // ---- el seguro antes de guardar ----
 function confirmar() {
@@ -483,15 +563,19 @@ function confirmar() {
     '<button class="btn sec" type="button" id="b-no">No, seguir editando</button></div></div>');
   $('#b-no').addEventListener('click', cerrarHoja);
   $('#b-si').addEventListener('click', async () => {
-    $('#b-si').disabled = true;
+    const b = $('#b-si'); b.disabled = true; b.textContent = 'Guardando…';
     try {
       const r = await fetch('/api/historial/guardar', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ semana: E.semana, tareas: E.tareas }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || ('error ' + r.status));
-      guardando = true;
-      location.href = '/tareas/historial?semana=' + encodeURIComponent(E.semana) + '&ok=' + encodeURIComponent(j.aviso || 'Lámina guardada');
-    } catch (e) { $('#b-si').disabled = false; avisa(e.message, true); }
+      // se queda en la página: se renumera lo guardado y se refrescan los créditos
+      E.tareas = E.tareas.map((t, i) => ({ ...t, ref: i }));
+      ORIG = JSON.parse(JSON.stringify(E.tareas));
+      siguienteNueva = -1;
+      if (j.creditos) E.creditos = j.creditos;
+      cerrarHoja(); refresca(); avisa(j.aviso || '✓ Guardado');
+    } catch (e) { b.disabled = false; b.textContent = 'Sí, guardar'; avisa(e.message, true); }
   });
 }
 function abrirHoja(html) { $('#hoja-cuerpo').innerHTML = html; $('#hoja').hidden = false; document.body.style.overflow = 'hidden'; }
@@ -499,8 +583,8 @@ function cerrarHoja() { $('#hoja').hidden = true; document.body.style.overflow =
 $('#hoja').addEventListener('click', (e) => { if (e.target.id === 'hoja') cerrarHoja(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { cerrarHoja(); if (sel) { sel = null; pintaPool(); pinta(); } } });
 $('#btn-guardar').addEventListener('click', confirmar);
-$('#btn-descartar').addEventListener('click', () => { if (confirm('¿Descartar todos los cambios sin guardar?')) { guardando = true; location.reload(); } });
-pintaPool(); pinta(); refrescaBarra();
+$('#btn-descartar').addEventListener('click', () => { if (confirm('¿Descartar todos los cambios sin guardar?')) { saliendo = true; location.reload(); } });
+pintaPool(); refresca();
 </script>`;
   return paginaPortal("Editar lámina · MIND",
     `${navPortal(p, "historial", puedeAsignar(p))}<h1>✏️ Editar la lámina</h1>
@@ -509,12 +593,26 @@ pintaPool(); pinta(); refrescaBarra();
 }
 
 const CSS_EDIT = `
-.barra-edit { display:flex; align-items:center; gap:9px; flex-wrap:wrap; background:#fff; border:1px solid #E4E1D2; border-radius:12px; padding:9px 13px; margin-bottom:12px; }
+.barra-edit { display:flex; align-items:center; gap:9px; flex-wrap:wrap; background:#fff; border:1px solid #E4E1D2; border-radius:12px; padding:9px 13px; margin-bottom:12px; position:sticky; top:0; z-index:6; }
 .barra-edit span { flex:1; min-width:140px; font-size:12.5px; font-weight:700; color:#8A8FB5; }
 .barra-edit.viva { border-color:#F5C518; background:#FFFBEA; }
 .barra-edit.viva span { color:#8A6A10; }
 .card.nueva { border-style:dashed; border-color:#8BC53F; }
 .acc { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+.zona-edit { display:grid; grid-template-columns:minmax(0,1fr) 262px; gap:14px; align-items:start; }
+@media (max-width:1050px) { .zona-edit { grid-template-columns:minmax(0,1fr); } }
+.resumen-edit { background:#fff; border:1px solid #E4E1D2; border-radius:14px; padding:12px 13px; position:sticky; top:64px; }
+.resumen-edit h3 { font-size:12.5px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; margin:0 0 8px; }
+.rr-tot { font-size:12.5px; color:#6A6F98; margin:0 0 10px; }
+.rr-tot b { color:#1C2260; }
+ul.rr { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; max-height:46vh; overflow-y:auto; }
+ul.rr li { display:flex; align-items:center; gap:8px; }
+ul.rr .rr-n { flex:1; min-width:0; font-size:12.5px; font-weight:700; color:#1C2260; }
+ul.rr .rr-n i { display:block; font-style:normal; font-size:10.5px; font-weight:600; color:#A0A5C2; }
+ul.rr .rr-c { flex:none; text-align:right; }
+ul.rr .rr-c b { display:block; font-size:15px; font-weight:800; line-height:1; }
+ul.rr .rr-c small { font-size:10px; color:#A0A5C2; }
+.rr-vacio, .rr-pie { font-size:11px; color:#8A8FB5; margin:8px 0 0; line-height:1.4; }
 ul.cambios { list-style:none; margin:12px 0 0; padding:0; display:flex; flex-direction:column; gap:7px; max-height:44vh; overflow-y:auto; }
 ul.cambios li { background:#F7F5EC; border:1px solid #E4E1D2; border-radius:10px; padding:8px 11px; font-size:13px; line-height:1.4; }
 ul.cambios li b { display:block; font-size:13px; }
