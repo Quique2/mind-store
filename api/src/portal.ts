@@ -6,7 +6,11 @@ import { ESTADOS, atrasada, badgeArea, badgeEstado, cuando, esAbierta, esc, fech
          jsonSeguro, paginaPortal, quienes, rangoSemana, semanaActual, sumarDias, lunesDe,
          tocaA, enSemana, type Tarea } from "./tareas";
 
-interface EventoLite { id: string; titulo: string; fecha: string }
+export interface EventoLite {
+  id: string; titulo: string; fecha: string;
+  tipo?: string; tipoNombre?: string; color?: string; tinta?: string; emoji?: string;
+  junta?: boolean; hora?: string; lugar?: string; abierto?: boolean; prereg?: boolean;
+}
 
 // ---------------- navegación ----------------
 /** Barra del portal. Quien tiene nivel de presidencia también ve las pestañas de administración. */
@@ -212,12 +216,50 @@ export function renderYo(p: Persona, todas: Tarea[], areas: Area[], staff: Perso
     const a = areaDeT(t);
     return `<button type="button" class="chip-cal ${pos} est-${t.estado}" style="--c:${a?.color ?? "#6A6F98"}" data-t="${esc(t.id)}" title="${esc(t.titulo)}">${pos === "mid" || pos === "fin" ? "" : esc(t.titulo)}</button>`;
   };
+  // eventos y juntas del mes que se está viendo (más los que tocan sus orillas)
+  const desde = inicioGrid, hasta = sumarDias(ultimo, 6);
+  const evMes = eventos.filter((e) => e.fecha >= desde && e.fecha <= hasta)
+    .sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
+  const porEvento = new Map<string, Tarea[]>();
+  for (const t of todas) {
+    if (t.vigencia.tipo !== "evento" || !t.vigencia.evento) continue;
+    const l = porEvento.get(t.vigencia.evento) ?? [];
+    l.push(t);
+    porEvento.set(t.vigencia.evento, l);
+  }
+  const datosEv = evMes.map((e) => {
+    const suyas = porEvento.get(e.id) ?? [];
+    return {
+      id: e.id, titulo: e.titulo, fecha: e.fecha, hora: e.hora ?? "", lugar: e.lugar ?? "",
+      tipo: e.tipoNombre ?? "", emoji: e.emoji ?? "📅", color: e.color ?? "#6A6F98", tinta: e.tinta ?? "#fff",
+      junta: Boolean(e.junta), abierto: e.abierto !== false, prereg: Boolean(e.prereg),
+      tareas: suyas.map((t) => ({
+        id: t.id, titulo: t.titulo, estado: t.estado, mia: tocaA(t, p.matricula),
+        area: areas.find((a) => a.id === t.area)?.nombre ?? "Sin área",
+        areaColor: areas.find((a) => a.id === t.area)?.color ?? "#6A6F98",
+        gente: t.asignados.map((m) => {
+          const s = staff.find((x) => x.matricula === m);
+          return s ? { ini: iniciales(s), nombre: s.nombre, apodo: nombreCorto(s), color: areaDe(s, areas).color } : null;
+        }).filter(Boolean),
+      })),
+    };
+  });
+  const evPorDia = new Map<string, typeof datosEv>();
+  for (const e of datosEv) {
+    const l = evPorDia.get(e.fecha) ?? [];
+    l.push(e);
+    evPorDia.set(e.fecha, l);
+  }
+  const franja = (e: typeof datosEv[number]) =>
+    `<button type="button" class="ev${e.abierto ? "" : " cerrado"}" style="--c:${e.color};--t:${e.tinta}" data-ev="${esc(e.id)}"
+      title="${esc(e.emoji + " " + e.titulo)}">${e.emoji} <span>${esc(e.titulo)}</span>${e.tareas.length ? `<i>${e.tareas.length}</i>` : ""}</button>`;
   let celdas = "";
   for (let d = inicioGrid, i = 0; (d <= ultimo || i % 7 !== 0) && i < 42; d = sumarDias(d, 1), i++) {
     const otroMes = !d.startsWith(mesActual);
     const lista = porDia.get(d) ?? [];
-    celdas += `<div class="dia${otroMes ? " otro" : ""}${d === hoy ? " hoy" : ""}" data-d="${d}">
-      <span class="num">${Number(d.slice(8))}</span>${lista.map((x) => chip(x.t, x.pos)).join("")}</div>`;
+    const evs = evPorDia.get(d) ?? [];
+    celdas += `<div class="dia${otroMes ? " otro" : ""}${d === hoy ? " hoy" : ""}${evs.length ? " conev" : ""}" data-d="${d}">
+      <span class="num">${Number(d.slice(8))}</span>${evs.map(franja).join("")}${lista.map((x) => chip(x.t, x.pos)).join("")}</div>`;
   }
   const editable = puedeAsignar(p, areas);
   const plantilla = (t: Tarea) => {
@@ -251,7 +293,9 @@ ${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
   ${transversales.length ? `<div class="banda"><span class="et">Siempre</span>${transversales.map((t) => chip(t, "solo")).join("")}</div>` : ""}
   <div class="cal-cab">${["L","M","X","J","V","S","D"].map((d) => `<span>${d}</span>`).join("")}</div>
   <div class="cal">${celdas}</div>
-  <p class="det" style="margin-top:8px">Toca una tarea para verla, o un día para ver lo de ese día. Las de color pleno son de esta semana; las tenues ya se cerraron.</p>
+  ${evMes.length ? `<div class="leyenda">${[...new Map(evMes.map((e) => [e.tipoNombre ?? "", e])).values()]
+    .map((e) => `<span><i style="background:${e.color}"></i>${esc(e.emoji ?? "")} ${esc(e.tipoNombre ?? "")}</span>`).join("")}</div>` : ""}
+  <p class="det" style="margin-top:8px">Las franjas de color son eventos y juntas: tócalas para ver sus tareas y quién las lleva. Toca una tarea para abrirla, o un día para ver todo lo de ese día.</p>
 </section>
 <section id="sec-lista" hidden>
   <h2>Pendientes <small>${abiertas.length}</small></h2>
@@ -280,15 +324,49 @@ function vista(v) {
 }
 try { if (localStorage.getItem('mind-vista') === 'lista' || location.hash.startsWith('#t-')) vista('lista'); } catch (e) {}
 const NOMBRE_DIA = ${jsonSeguro(MESES)};
+const EVENTOS = ${jsonSeguro(datosEv)};
+const YO = ${jsonSeguro(p.matricula)};
+const ESTADOS = ${jsonSeguro(ESTADOS)};
+const escH = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function hojaEvento(id) {
+  const e = EVENTOS.find((x) => x.id === id);
+  if (!e) return '';
+  const f = e.fecha.split('-');
+  const cuando = Number(f[2]) + ' de ' + NOMBRE_DIA[Number(f[1]) - 1] + (e.hora ? ' · ' + e.hora + ' h' : '');
+  const filas = e.tareas.map((t) => {
+    const gente = t.gente.length
+      ? t.gente.map((g) => '<span class="ficha mini-f" style="--c:' + g.color + '"><span class="ava">' + escH(g.ini) + '</span>' + escH(g.apodo) + '</span>').join('')
+      : '<span class="todos">TODOS</span>';
+    return '<div class="ev-tarea' + (t.mia ? ' mia' : '') + '" style="--a:' + t.areaColor + '">' +
+      '<div class="ev-tit"><b>' + escH(t.titulo) + '</b>' + (t.mia ? '<span class="tuya">tuya</span>' : '') + '</div>' +
+      '<div class="meta"><span class="chip" style="background:' + ESTADOS[t.estado].color + ';color:' + ESTADOS[t.estado].tinta + '">' + ESTADOS[t.estado].nombre + '</span><span>' + escH(t.area) + '</span></div>' +
+      '<div class="gente-lista">' + gente + '</div></div>';
+  }).join('');
+  const hechas = e.tareas.filter((t) => t.estado === 'hecha').length;
+  return '<div class="ev-cab" style="--c:' + e.color + ';--t:' + e.tinta + '">' +
+      '<div class="ev-emoji">' + e.emoji + '</div>' +
+      '<div><b>' + escH(e.titulo) + '</b><small>' + escH(e.tipo) + ' · ' + escH(cuando) + (e.lugar ? ' · 📍 ' + escH(e.lugar) : '') + '</small></div></div>' +
+    (e.tareas.length
+      ? '<p class="det" style="margin:10px 2px">' + e.tareas.length + ' tarea' + (e.tareas.length === 1 ? '' : 's') + ' de este evento · ' + hechas + ' hecha' + (hechas === 1 ? '' : 's') + '</p>' + filas
+      : '<p class="vacio" style="margin-top:10px">Todavía no hay tareas ligadas a este evento. En el tablero puedes crear una y elegir «Para un evento».</p>') +
+    '<div class="acc" style="margin-top:12px">' +
+      (e.junta ? '' : '<a class="btn sec mini" href="/galeria?evento=' + encodeURIComponent(e.id) + '" target="_blank">🖼️ Fotos</a>') +
+      '<a class="btn sec mini" href="/asistencia/' + encodeURIComponent(e.id) + '" target="_blank">📝 Registro</a>' +
+      (e.prereg ? '<a class="btn sec mini" href="/preregistro/' + encodeURIComponent(e.id) + '" target="_blank">✨ Prerregistro</a>' : '') +
+    '</div>';
+}
 function abrirHoja(html) { document.getElementById('hoja-cuerpo').innerHTML = html; document.getElementById('hoja').hidden = false; document.body.style.overflow = 'hidden'; }
 function cerrarHoja() { document.getElementById('hoja').hidden = true; document.body.style.overflow = ''; }
 function tpl(id) { const t = document.getElementById('tpl-' + id); return t ? t.innerHTML : ''; }
 document.querySelectorAll('.chip-cal').forEach((c) => c.addEventListener('click', (e) => { e.stopPropagation(); abrirHoja(tpl(c.dataset.t)); }));
+document.querySelectorAll('.ev').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); abrirHoja(hojaEvento(b.dataset.ev)); }));
 document.querySelectorAll('.dia').forEach((d) => d.addEventListener('click', () => {
   const ids = [...new Set([...d.querySelectorAll('.chip-cal')].map((c) => c.dataset.t))];
+  const evs = [...d.querySelectorAll('.ev')].map((b) => b.dataset.ev);
   const f = d.dataset.d.split('-');
   const titulo = '<h3 style="margin-bottom:10px">' + Number(f[2]) + ' de ' + NOMBRE_DIA[Number(f[1]) - 1] + '</h3>';
-  abrirHoja(titulo + (ids.length ? ids.map(tpl).join('') : '<p class="det">Nada para este día.</p>'));
+  const cuerpo = evs.map(hojaEvento).join('') + ids.map(tpl).join('');
+  abrirHoja(titulo + (cuerpo || '<p class="det">Nada para este día.</p>'));
 }));
 document.getElementById('hoja').addEventListener('click', (e) => { if (e.target.id === 'hoja') cerrarHoja(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cerrarHoja(); });
@@ -317,6 +395,31 @@ const CSS_CAL = `
 .chip-cal.est-hecha, .chip-cal.est-vencida { opacity:.45; text-decoration:line-through; }
 .chip-cal.est-curso { box-shadow:inset 0 0 0 2px rgba(255,255,255,.55); }
 .banda .chip-cal { border-radius:999px; }
+.dia.conev { background:#FFFDF6; }
+.ev { font:inherit; font-size:10.5px; font-weight:800; color:var(--t); background:var(--c); border:none; border-radius:5px; padding:3px 5px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:3px; min-height:19px; letter-spacing:.01em; }
+.ev span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+.ev i { font-style:normal; background:rgba(255,255,255,.35); border-radius:999px; padding:0 5px; font-size:9.5px; }
+.ev.cerrado { opacity:.6; }
+.leyenda { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; font-size:11.5px; color:#6A6F98; font-weight:600; }
+.leyenda span { display:inline-flex; align-items:center; gap:5px; }
+.leyenda i { width:10px; height:10px; border-radius:3px; display:inline-block; }
+.ev-cab { display:flex; gap:11px; align-items:center; background:var(--c); color:var(--t); border-radius:12px; padding:12px 14px; }
+.ev-cab .ev-emoji { font-size:26px; }
+.ev-cab b { font-size:16px; display:block; }
+.ev-cab small { font-size:11.5px; opacity:.85; }
+.ev-tarea { background:#fff; border:1px solid #E4E1D2; border-left:4px solid var(--a); border-radius:11px; padding:10px 12px; margin-bottom:7px; }
+.ev-tarea.mia { background:#F4FBFD; border-color:#BEE3F0; }
+.ev-tit { display:flex; align-items:center; gap:8px; }
+.ev-tit b { font-size:14px; font-weight:600; }
+.tuya { font-size:9.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; background:#2E4BC6; color:#fff; border-radius:999px; padding:2px 7px; }
+.ev-tarea .meta { display:flex; gap:7px; align-items:center; font-size:11px; color:#8A8FB5; margin-top:5px; flex-wrap:wrap; }
+.ev-tarea .gente-lista { margin-top:7px; }
+.ficha.mini-f { font-size:11.5px; padding:2px 9px 2px 2px; }
+.ficha.mini-f .ava { width:20px; height:20px; font-size:9px; }
+@media (max-width:640px) {
+  .ev { font-size:0; min-height:12px; padding:0 3px; gap:0; }
+  .ev span { display:none; } .ev i { display:none; }
+}
 @media (max-width:640px) {
   .dia { min-height:58px; padding:22px 3px 3px; }
   .dia .chip-cal { font-size:0; min-height:8px; height:8px; padding:0; border-radius:4px; }

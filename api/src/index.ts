@@ -17,7 +17,7 @@ import { leerEventos, leerAsistencias, crearEvento, alternarEvento, buscarEvento
          renderCSV as renderAsistenciaCSV, borrarEvento, renderConfirmarBorrado, esStaff,
          quitarAsistencia, cambiarStaff, listaPersonas, esJunta, leerPreregistros, preregistrar,
          quitarPrereg, alternarPrereg, renderPreregistro, renderResultadoPre, renderCSVPre,
-         type TipoId } from "./eventos";
+         nombreTipo, TIPOS, type TipoId } from "./eventos";
 import multer from "multer";
 import { leerStaff, guardarStaff, leerAreas, guardarAreas, buscarPersona, normMat, generarPin,
          ponerPin, pinCorrecto, crearSesion, leerSesion, cookieSesion, cookieBorrar, staffActivo,
@@ -605,10 +605,13 @@ const volverPortal = (destino: string, aviso: string) =>
   `${destino}${destino.includes("?") ? "&" : "?"}ok=${encodeURIComponent(aviso)}`;
 const avisoDe = (req: express.Request) =>
   req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
-/** Eventos (no juntas) para amarrar tareas, del más reciente al más viejo. */
+/** Eventos y juntas para el calendario y para amarrar tareas, del más reciente al más viejo. */
 const eventosLite = () => leerEventos()
   .sort((a, b) => (a.fecha < b.fecha ? 1 : -1))
-  .map((e) => ({ id: e.id, titulo: e.titulo, fecha: e.fecha }));
+  .map((e) => ({ id: e.id, titulo: e.titulo, fecha: e.fecha, tipo: e.tipo,
+                 tipoNombre: nombreTipo(e), color: TIPOS[e.tipo].color, tinta: TIPOS[e.tipo].tinta,
+                 emoji: TIPOS[e.tipo].emoji, junta: esJunta(e), hora: e.hora ?? "", lugar: e.lugar ?? "",
+                 abierto: e.abierto, prereg: Boolean(e.prereg) }));
 
 app.get("/portal", (req, res) => {
   const p = sesion(req);

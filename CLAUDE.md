@@ -136,7 +136,11 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   Todo vía API JSON con sesión: `POST /api/tareas`, `PATCH /api/tareas/:id` (titulo, detalle,
   area, asignados, estado, vigencia, posponer), `DELETE /api/tareas/:id`. `/tareas/lista` es
   la vista de lista con formularios completos (evidencia).
-- **Mis tareas** (`/portal?mes=YYYY-MM`): calendario mensual con barras por rango, banda
+- **Mis tareas** (`/portal?mes=YYYY-MM`): el calendario también pinta EVENTOS y JUNTAS del mes
+  como franjas con el color de su tipo y un contador de tareas ligadas; al tocarlas se abre la
+  hoja con esas tareas, su estado, área y las fichas de quién las lleva (lo tuyo va marcado).
+  `eventosLite()` en index.ts es quien manda tipo, color, emoji, hora, lugar y prereg al portal.
+- **Mis tareas** (continúa): calendario mensual con barras por rango, banda
   «Siempre» para transversales y hoja inferior con acciones; pestaña Lista secundaria.
 - Notion (`api/src/notion.ts`, token en `NOTION_TOKEN`): `POST /admin/notion/importar`
   con `modo=aplicar` trae Directorio, tareas abiertas y agenda futura del semestre
