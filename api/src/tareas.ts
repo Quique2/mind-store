@@ -199,6 +199,7 @@ export function cuando(t: Tarea, eventos: { id: string; titulo: string }[]): str
 
 export const CSS_PORTAL = `
 * { margin:0; padding:0; box-sizing:border-box; }
+[hidden] { display:none !important; }   /* que ninguna regla display: gane al atributo hidden */
 body { background:#F7F5EC; color:#1C2260; font-family:'Poppins','Segoe UI',system-ui,sans-serif; }
 header { background:linear-gradient(140deg,#29A3C7,#2E4BC6 60%,#232D93); color:#fff; padding:26px 22px; }
 header h1 { font-size:23px; font-weight:800; }
