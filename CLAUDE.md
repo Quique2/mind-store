@@ -142,6 +142,13 @@ Tienda web del grupo estudiantil MIND (impresión 3D · neurodiversidad · MTY).
   `eventosLite()` en index.ts es quien manda tipo, color, emoji, hora, lugar y prereg al portal.
 - **Mis tareas** (continúa): calendario mensual con barras por rango, banda
   «Siempre» para transversales y hoja inferior con acciones; pestaña Lista secundaria.
+- **Transversales = recurrentes**: marcarlas hechas apunta una vuelta en `t.vueltas`
+  ({semana, ts, por}, una por semana) y al abrir el portal en una semana nueva
+  `refrescarRecurrentes()` las reabre solas. Nunca se cierran para siempre.
+- **Tardías**: se pueden marcar hechas después de su fecha y cuentan igual; se ve la
+  etiqueta «hecha tarde» y solo se pierde el bono de puntualidad, que exige fecha real.
+- **Evidencia**: `POST /tareas/evidencia/quitar` (borra también el archivo del disco) y
+  `/tareas/evidencia/mover` (a otra tarea). Puede quien la subió o quien dirige el área.
 - **MIND Awards** (`api/src/awards.ts`, `/tareas/awards?periodo=todo|mes|semana&orden=puntos|tareas|cumple|tiempo|juntas|eventos`): ranking que
   cruza tareas hechas, puntualidad y asistencia a eventos y juntas. Puntos: 10 por tarea hecha,
   +3 si se cerró antes de su fecha o de su evento, 5 por junta y 8 por evento; nada resta. Las

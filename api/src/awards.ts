@@ -3,7 +3,7 @@
 import { areaDe, iniciales, leerAreas, nombreCorto, puedeAsignar, ROLES, staffActivo,
          type Persona } from "./staff";
 import { leerTareas, esAbierta, esc, jsonSeguro, paginaPortal, hoyISO, semanaActual,
-         type Tarea } from "./tareas";
+         esRecurrente, cumplidaEstaSemana, type Tarea } from "./tareas";
 import { leerAsistencias, leerEventos, esJunta } from "./eventos";
 import { navPortal } from "./portal";
 
@@ -20,6 +20,7 @@ export interface FilaAward {
   matricula: string; nombre: string; apodo: string; ini: string;
   area: string; color: string; rol: string;
   asignadas: number; hechas: number; pct: number; aTiempo: number;
+  vueltas: number;   // veces que cumplió una tarea transversal (una por semana)
   juntas: number; eventos: number; puntos: number;
   medallas: string[];
 }
@@ -37,9 +38,10 @@ export const CATEGORIAS: Record<Orden, Categoria> = {
     chico: (x) => `${x.hechas} tarea${x.hechas === 1 ? "" : "s"} · ${x.juntas} junta${x.juntas === 1 ? "" : "s"} · ${x.eventos} evento${x.eventos === 1 ? "" : "s"}`,
   },
   tareas: {
-    nombre: "Tareas hechas", emoji: "✅", explica: "Cuántas tareas cerró, sin importar cuántas tenía",
+    nombre: "Tareas hechas", emoji: "✅",
+    explica: "Cuántas cerró · las transversales cuentan una vez por cada semana que las cumplió",
     valor: (x) => x.hechas, grande: (x) => `${x.hechas}`,
-    chico: (x) => `de ${x.asignadas} asignada${x.asignadas === 1 ? "" : "s"}`,
+    chico: (x) => `${x.asignadas} asignada${x.asignadas === 1 ? "" : "s"}${x.vueltas ? ` · ${x.vueltas} vuelta${x.vueltas === 1 ? "" : "s"} de transversales` : ""}`,
   },
   cumple: {
     nombre: "Cumplimiento", emoji: "🎯",
@@ -52,7 +54,7 @@ export const CATEGORIAS: Record<Orden, Categoria> = {
   tiempo: {
     nombre: "Puntualidad", emoji: "⏱️", explica: "Tareas cerradas antes de su fecha o de su evento",
     valor: (x) => x.aTiempo, grande: (x) => `${x.aTiempo}`,
-    chico: (x) => `de ${x.hechas} hecha${x.hechas === 1 ? "" : "s"}`,
+    chico: (x) => `de ${x.hechas} cerrada${x.hechas === 1 ? "" : "s"} · solo cuentan las que tenían fecha`,
   },
   juntas: {
     nombre: "Juntas", emoji: "📋", explica: "A cuántas juntas de staff asistió",
@@ -74,7 +76,7 @@ function aTiempo(t: Tarea, fechaEvento?: string): boolean {
   if (t.estado !== "hecha" || !t.hechaEl) return false;
   const limite = t.vigencia.tipo === "fechas" ? t.vigencia.fin
     : t.vigencia.tipo === "evento" ? fechaEvento : undefined;
-  return !limite || t.hechaEl.slice(0, 10) <= limite;
+  return Boolean(limite) && t.hechaEl.slice(0, 10) <= limite!;
 }
 
 export function calcularAwards(periodo: Periodo) {
@@ -90,9 +92,18 @@ export function calcularAwards(periodo: Periodo) {
   const asis = leerAsistencias().filter((a) => a.ts.slice(0, 10) >= desde);
 
   const filas: FilaAward[] = staff.map((p) => {
-    const suyas = tareas.filter((t) => t.asignados.includes(p.matricula) && fechaDe(t) >= desde);
-    const hechas = suyas.filter((t) => t.estado === "hecha");
-    const puntual = hechas.filter((t) => aTiempo(t, fechaEv.get(t.vigencia.evento ?? ""))).length;
+    const suyas = tareas.filter((t) => t.asignados.includes(p.matricula)
+      && (esRecurrente(t) || fechaDe(t) >= desde));
+    // una transversal cuenta una vez por CADA semana cumplida; el resto, una sola vez
+    const rec = suyas.filter(esRecurrente);
+    const noRec = suyas.filter((t) => !esRecurrente(t));
+    const vueltas = rec.reduce((n, t) =>
+      n + (t.vueltas ?? []).filter((v) => v.semana >= desde && v.por === p.matricula).length, 0);
+    const hechasNoRec = noRec.filter((t) => t.estado === "hecha");
+    const cerradas = hechasNoRec.length + vueltas;
+    // el porcentaje mira el ahora: de lo que tienes, cuánto está cerrado
+    const pctNum = hechasNoRec.length + rec.filter(cumplidaEstaSemana).length;
+    const puntual = hechasNoRec.filter((t) => aTiempo(t, fechaEv.get(t.vigencia.evento ?? ""))).length;
     const mias = asis.filter((a) => a.matricula === p.matricula);
     const juntas = mias.filter((a) => { const e = evIdx.get(a.evento); return e && esJunta(e); }).length;
     const evs = mias.length - juntas;
@@ -100,10 +111,10 @@ export function calcularAwards(periodo: Periodo) {
     return {
       matricula: p.matricula, nombre: p.nombre, apodo: nombreCorto(p), ini: iniciales(p),
       area: a.nombre, color: a.color, rol: ROLES[p.rol].nombre,
-      asignadas: suyas.length, hechas: hechas.length,
-      pct: suyas.length ? Math.round(100 * hechas.length / suyas.length) : 0,
+      asignadas: suyas.length, hechas: cerradas, vueltas,
+      pct: suyas.length ? Math.round(100 * pctNum / suyas.length) : 0,
       aTiempo: puntual, juntas, eventos: evs,
-      puntos: hechas.length * 10 + puntual * 3 + juntas * 5 + evs * 8,
+      puntos: cerradas * 10 + puntual * 3 + juntas * 5 + evs * 8,
       medallas: [],
     };
   });
@@ -161,7 +172,7 @@ export function renderAwards(p: Persona, periodo: Periodo, orden: Orden): string
         <div><b>${esc(x.apodo)}</b><small>${esc(x.nombre)}</small>
         <span class="area-chip chico" style="--c:${x.color}">${esc(x.rol)} de ${esc(x.area)}</span></div></div>
         ${x.medallas.length ? `<div class="medallitas">${x.medallas.map((m) => `<span>${esc(m)}</span>`).join("")}</div>` : ""}</td>
-      ${cel(orden === "tareas", `${x.hechas}<small>${x.asignadas ? "de " + x.asignadas : "sin asignar"}</small>`)}
+      ${cel(orden === "tareas", `${x.hechas}<small>${x.asignadas ? "de " + x.asignadas : "sin asignar"}${x.vueltas ? " · " + x.vueltas + " de transversales" : ""}</small>`)}
       ${cel(orden === "cumple", x.asignadas
         ? `<div class="barra"><i style="width:${x.pct}%;background:${x.color}"></i></div><b>${x.pct}%</b>${x.asignadas < MIN_CUMPLE ? '<small>fuera del podio</small>' : ""}`
         : '<span class="guion">—</span>')}
@@ -214,7 +225,7 @@ ${podio.length
 <div class="tarjeta como">
   <b>Cómo se cuentan los puntos</b>
   <ul>
-    <li><b>10 puntos</b> por cada tarea marcada como hecha.</li>
+    <li><b>10 puntos</b> por cada tarea marcada como hecha. Las transversales no se acaban: cuentan otra vez cada semana que se cumplen.</li>
     <li><b>3 puntos extra</b> si se cerró antes de su fecha límite o antes de su evento.</li>
     <li><b>5 puntos</b> por cada junta a la que asistió.</li>
     <li><b>8 puntos</b> por cada evento de MIND al que se apareció.</li>

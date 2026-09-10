@@ -24,7 +24,8 @@ import { leerStaff, guardarStaff, leerAreas, guardarAreas, buscarPersona, normMa
          esPresidencia, dirigeArea, puedeAsignar, ROLES, type Persona, type RolId } from "./staff";
 import { leerTareas, guardarTareas, crearTarea, conId, actualizar, borrarTarea, posponer, cerrarSemana,
          esAbierta, enSemana, tocaA, atrasada, semanaActual, lunesDe, hoyISO, sumarDias, DIR_EVIDENCIA,
-         archivoSeguro, nuevoId as nuevoIdTarea, type Tarea, type EstadoTarea } from "./tareas";
+         archivoSeguro, marcarHecha, refrescarRecurrentes, esRecurrente,
+         nuevoId as nuevoIdTarea, type Tarea, type EstadoTarea } from "./tareas";
 import { renderEntrar, renderElegirPin, renderYo, renderTablero, renderTableroLista, renderLamina,
          renderCerrarSemana, renderEquipo } from "./portal";
 import { conClave } from "./ui";
@@ -618,8 +619,8 @@ app.get("/portal", (req, res) => {
   const p = sesion(req);
   if (!p) return res.type("html").send(renderEntrar());
   if (p.provisional) return res.type("html").send(renderElegirPin(p));
-  res.type("html").send(renderYo(p, leerTareas(), leerAreas(), leerStaff(), eventosLite(), avisoDe(req),
-                                 String(req.query.mes ?? "")));
+  res.type("html").send(renderYo(p, refrescarRecurrentes(), leerAreas(), leerStaff(), eventosLite(),
+                                 avisoDe(req), String(req.query.mes ?? "")));
 });
 
 // Un PIN son cuatro dígitos: sin freno, alguien podría probarlos todos.
@@ -706,7 +707,7 @@ app.get("/tareas", (req, res) => {
   if (!p) return;
   const areas = leerAreas();
   if (!puedeAsignar(p, areas)) return res.redirect("/portal");
-  res.type("html").send(renderTablero(p, leerTareas(), areas, leerStaff(), eventosLite(), avisoDe(req)));
+  res.type("html").send(renderTablero(p, refrescarRecurrentes(), areas, leerStaff(), eventosLite(), avisoDe(req)));
 });
 app.get("/tareas/lista", (req, res) => {
   const p = exigeSesion(req, res);
@@ -794,11 +795,10 @@ app.post("/tareas/estado", urlencoded, (req, res) => {
     return res.redirect(volverPortal(destino, "Solo quien dirige el área puede dar por vencida una tarea."));
   }
   actualizar(t.id, (x) => {
+    if (nuevo === "hecha") { marcarHecha(x, p.matricula); return; }
     x.estado = nuevo as EstadoTarea;
-    if (nuevo === "hecha") { x.hechaEl = new Date().toISOString(); x.hechaPor = p.matricula; }
-    else { x.hechaEl = undefined; x.hechaPor = undefined; }
-    if (nuevo === "vencida") x.cerradaEn = semanaActual();
-    if (nuevo === "pendiente" || nuevo === "curso") x.cerradaEn = undefined;
+    x.hechaEl = undefined; x.hechaPor = undefined;
+    x.cerradaEn = nuevo === "vencida" ? semanaActual() : undefined;
   });
   espejarPronto();
   const dicho = nuevo === "hecha" ? "✓ ¡Hecha!" : nuevo === "vencida" ? "Marcada como vencida" : "Actualizada";
@@ -874,6 +874,50 @@ app.post("/tareas/evidencia",
     espejarPronto();
     res.redirect(volverPortal(destino, `📎 Evidencia agregada a ${t.titulo}`));
   });
+
+// quitar una evidencia (la borra del disco) o moverla a otra tarea
+const puedeTocarEvidencia = (yo: Persona, t: Tarea, idx: number) => {
+  const e = t.evidencia[idx];
+  return Boolean(e) && (e.por === yo.matricula || dirigeArea(yo, t.area, leerAreas()));
+};
+app.post("/tareas/evidencia/quitar", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const b = req.body as { id?: string; i?: string; volver?: string };
+  const destino = String(b.volver ?? "/portal");
+  const t = conId(String(b.id ?? ""));
+  const i = Number(b.i);
+  if (!t || !Number.isInteger(i) || !puedeTocarEvidencia(p, t, i)) {
+    return res.redirect(volverPortal(destino, "No se pudo quitar esa evidencia."));
+  }
+  const e = t.evidencia[i];
+  actualizar(t.id, (x) => { x.evidencia.splice(i, 1); });
+  if (e.archivo && archivoSeguro(e.archivo)) {
+    try { fs.unlinkSync(path.join(DIR_EVIDENCIA, e.archivo)); } catch { /* ya no está */ }
+  }
+  espejarPronto();
+  res.redirect(volverPortal(destino, `Se quitó la evidencia «${e.nombre}» de ${t.titulo}`));
+});
+app.post("/tareas/evidencia/mover", urlencoded, (req, res) => {
+  const p = exigeSesion(req, res);
+  if (!p) return;
+  const b = req.body as { id?: string; i?: string; destinoId?: string; volver?: string };
+  const destino = String(b.volver ?? "/portal");
+  const t = conId(String(b.id ?? ""));
+  const i = Number(b.i);
+  const otra = conId(String(b.destinoId ?? ""));
+  if (!t || !otra || t.id === otra.id || !Number.isInteger(i) || !puedeTocarEvidencia(p, t, i)) {
+    return res.redirect(volverPortal(destino, "No se pudo mover esa evidencia."));
+  }
+  if (!tocaA(otra, p.matricula) && !dirigeArea(p, otra.area, leerAreas())) {
+    return res.redirect(volverPortal(destino, "No puedes mover evidencia a una tarea que no es tuya."));
+  }
+  const e = t.evidencia[i];
+  actualizar(t.id, (x) => { x.evidencia.splice(i, 1); });
+  actualizar(otra.id, (x) => { x.evidencia.push(e); });
+  espejarPronto();
+  res.redirect(volverPortal(destino, `«${e.nombre}» se movió a ${otra.titulo}`));
+});
 
 app.use("/tareas/evidencia", (req, res, next) => {
   if (!sesion(req)) return res.status(401).send("Entra al portal para ver la evidencia.");
@@ -1210,10 +1254,12 @@ app.patch("/api/tareas/:id", (req, res) => {
         : v.tipo === "evento" ? { tipo: "evento", evento: v.evento || undefined } : { tipo: "transversal" };
     }
     if (c.estado !== undefined) {
-      x.estado = c.estado;
-      if (c.estado === "hecha") { x.hechaEl = new Date().toISOString(); x.hechaPor = p.matricula; }
-      else { x.hechaEl = undefined; x.hechaPor = undefined; }
-      x.cerradaEn = c.estado === "vencida" ? semanaActual() : undefined;
+      if (c.estado === "hecha") marcarHecha(x, p.matricula);
+      else {
+        x.estado = c.estado;
+        x.hechaEl = undefined; x.hechaPor = undefined;
+        x.cerradaEn = c.estado === "vencida" ? semanaActual() : undefined;
+      }
     }
     if (c.posponer) posponer(x);
   });

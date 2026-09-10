@@ -36,6 +36,7 @@ export interface Tarea {
   hechaEl?: string;
   hechaPor?: string;
   cerradaEn?: string;            // lunes de la semana en que se archivó
+  vueltas?: { semana: string; ts: string; por: string }[];  // transversales: cada vez que se cumplió
   notion?: string;               // página espejo en Notion
   origen?: string;               // fila de Notion de la que se importó
 }
@@ -95,9 +96,24 @@ export function enSemana(t: Tarea, lunes: string): boolean {
   const fin = v.fin ?? "9999-99-99";
   return ini <= dom && fin >= lunes;
 }
-/** Vencida por fecha (no por estado). */
+/** Vencida por fecha (no por estado): sigue abierta y su fecha ya pasó. */
 export const atrasada = (t: Tarea) =>
   esAbierta(t) && t.vigencia.tipo === "fechas" && !!t.vigencia.fin && t.vigencia.fin < hoyISO();
+/** Fecha límite de la tarea; con evento, el día del evento. */
+export const limiteDe = (t: Tarea, fechaEvento?: string) =>
+  t.vigencia.tipo === "fechas" ? t.vigencia.fin
+  : t.vigencia.tipo === "evento" ? fechaEvento : undefined;
+/** Se cerró, pero después de su fecha. Cuenta como hecha; solo no da el punto extra. */
+export function hechaTarde(t: Tarea, fechaEvento?: string): boolean {
+  if (t.estado !== "hecha" || !t.hechaEl) return false;
+  const l = limiteDe(t, fechaEvento);
+  return Boolean(l && t.hechaEl.slice(0, 10) > l);
+}
+/** Las transversales no se acaban: se cumplen cada semana. */
+export const esRecurrente = (t: Tarea) => t.vigencia.tipo === "transversal";
+/** ¿Ya la cumplió esta semana? */
+export const cumplidaEstaSemana = (t: Tarea) =>
+  t.estado === "hecha" && (!esRecurrente(t) || t.cerradaEn === semanaActual());
 
 export const tocaA = (t: Tarea, matricula: string) =>
   t.asignados.length === 0 || t.asignados.includes(matricula);
@@ -112,6 +128,39 @@ export function crearTarea(d: Omit<Tarea, "id" | "estado" | "evidencia" | "cread
   return t;
 }
 export function conId(id: string, l = leerTareas()) { return l.find((t) => t.id === id); }
+
+/** Marca hecha y, si es transversal, apunta la vuelta de esta semana. */
+export function marcarHecha(t: Tarea, por: string): void {
+  t.estado = "hecha";
+  t.hechaEl = new Date().toISOString();
+  t.hechaPor = por;
+  t.cerradaEn = semanaActual();
+  if (esRecurrente(t)) {
+    t.vueltas = t.vueltas ?? [];
+    if (!t.vueltas.some((v) => v.semana === t.cerradaEn)) {
+      t.vueltas.push({ semana: t.cerradaEn!, ts: t.hechaEl!, por });
+    }
+  }
+}
+
+/** Las transversales cumplidas en semanas anteriores vuelven a abrirse solas.
+ *  Se llama al pintar el portal: barato, porque el archivo ya se estaba leyendo. */
+export function refrescarRecurrentes(): Tarea[] {
+  const l = leerTareas();
+  const lunes = semanaActual();
+  let cambio = false;
+  for (const t of l) {
+    if (esRecurrente(t) && t.estado === "hecha" && (t.cerradaEn ?? "") < lunes) {
+      t.estado = "pendiente";
+      t.hechaEl = undefined;
+      t.hechaPor = undefined;
+      t.cerradaEn = undefined;
+      cambio = true;
+    }
+  }
+  if (cambio) guardarTareas(l);
+  return l;
+}
 
 export function actualizar(id: string, cambio: (t: Tarea) => void): Tarea | null {
   const l = leerTareas();
@@ -232,8 +281,18 @@ input:focus, select:focus, textarea:focus { outline:2px solid #2E4BC6; outline-o
 .tarea .acc { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
 .tarea .acc form { display:inline; }
 .det { font-size:12px; color:#6A6F98; margin-top:3px; line-height:1.5; }
-.evid { font-size:11.5px; margin-top:7px; display:flex; gap:8px; flex-wrap:wrap; }
-.evid a { color:#2E4BC6; font-weight:600; text-decoration:none; background:#EEF1FC; border-radius:8px; padding:3px 9px; }
+.evid { font-size:11.5px; margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+.evid a { color:#2E4BC6; font-weight:600; text-decoration:none; }
+.evi-uno { display:inline-flex; align-items:center; gap:7px; background:#EEF1FC; border:1px solid #DCE3FA; border-radius:9px; padding:4px 6px 4px 10px; }
+.evi-uno small { color:#8A8FB5; font-size:10.5px; }
+.evi-uno form { display:inline-flex; }
+.evi-uno .x { font:inherit; font-size:11px; line-height:1; color:#A03434; background:#FBECEC; border:1px solid #F0CFCF; border-radius:6px; width:22px; height:22px; cursor:pointer; }
+.evi-uno .x:hover { background:#F5D9D9; }
+.evi-uno .mover select { font:inherit; font-size:10.5px; min-height:22px; height:22px; padding:0 4px; width:auto; max-width:118px; border-radius:6px; border:1px solid #DCE3FA; background:#fff; color:#6A6F98; }
+.tag { font-size:10px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; border-radius:999px; padding:2px 8px; }
+.tag.mal { background:#FBECEC; color:#A03434; }
+.tag.tarde { background:#FDF3D7; color:#8A6A10; }
+.tag.repite { background:#E8F3D9; color:#3F6B10; text-transform:none; letter-spacing:0; font-weight:700; }
 .puntos { display:flex; gap:8px; justify-content:center; margin-top:28px; }
 .puntos i { width:9px; height:9px; border-radius:50%; display:block; }
 footer { font-size:11.5px; color:#8A8FB5; margin-top:14px; text-align:center; }

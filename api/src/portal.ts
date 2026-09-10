@@ -4,7 +4,7 @@ import { ROLES, areaDe, esPresidencia, dirigeArea, nombreCorto, puedeAsignar, in
          type Area, type Persona, type RolId } from "./staff";
 import { ESTADOS, atrasada, badgeArea, badgeEstado, cuando, esAbierta, esc, fechaCorta, hoyISO,
          jsonSeguro, paginaPortal, quienes, rangoSemana, semanaActual, sumarDias, lunesDe,
-         tocaA, enSemana, type Tarea } from "./tareas";
+         tocaA, enSemana, hechaTarde, esRecurrente, type Tarea } from "./tareas";
 
 export interface EventoLite {
   id: string; titulo: string; fecha: string;
@@ -95,19 +95,31 @@ const avatar = (p: Persona, areas: Area[], extra = "") =>
 
 /** Tarjeta de lista (la usan Mis tareas en vista de lista y el tablero en vista de lista). */
 function tarjeta(t: Tarea, yo: Persona, areas: Area[], staff: Persona[], eventos: EventoLite[],
-                 opciones: { editable: boolean; volver: string }): string {
+                 opciones: { editable: boolean; volver: string; otras?: Tarea[] }): string {
   const a = areas.find((x) => x.id === t.area) ?? { id: "", nombre: "Sin área", color: "#6A6F98", tinta: "#fff", emoji: "•", orden: 99 };
   const mio = tocaA(t, yo.matricula);
   const puedeMarcar = mio || dirigeArea(yo, t.area, areas);
   const atras = atrasada(t);
-  const ev = t.evidencia.map((e) => e.tipo === "enlace"
-    ? `<a href="${esc(e.url ?? "")}" target="_blank" rel="noopener">🔗 ${esc(e.nombre)}</a>`
-    : `<a href="/tareas/evidencia/${esc(e.archivo ?? "")}" target="_blank">📎 ${esc(e.nombre)}</a>`).join("");
+  const fechaEv = eventos.find((x) => x.id === t.vigencia.evento)?.fecha;
+  const tarde = hechaTarde(t, fechaEv);
+  const otras = (opciones.otras ?? []).filter((x) => x.id !== t.id);
+  const evi = t.evidencia.map((e, i) => {
+    const quien = staff.find((x) => x.matricula === e.por);
+    const puedeQuitar = e.por === yo.matricula || dirigeArea(yo, t.area, areas);
+    const oculto = `<input type="hidden" name="id" value="${esc(t.id)}"><input type="hidden" name="i" value="${i}"><input type="hidden" name="volver" value="${esc(opciones.volver)}">`;
+    const enlace = e.tipo === "enlace"
+      ? `<a href="${esc(e.url ?? "")}" target="_blank" rel="noopener">🔗 ${esc(e.nombre)}</a>`
+      : `<a href="/tareas/evidencia/${esc(e.archivo ?? "")}" target="_blank">📎 ${esc(e.nombre)}</a>`;
+    return `<div class="evi-uno">${enlace}
+      <small>${quien ? esc(nombreCorto(quien)) : ""} · ${esc(fechaCorta(e.ts.slice(0, 10)))}</small>
+      ${puedeQuitar ? `<form method="post" action="/tareas/evidencia/quitar" onsubmit="return confirm('¿Quitar «${esc(e.nombre)}» de esta tarea?')">${oculto}<button class="x" type="submit" title="Quitar">✕</button></form>${otras.length ? `<form method="post" action="/tareas/evidencia/mover" class="mover">${oculto}<select name="destinoId" onchange="if(this.value)this.form.submit()"><option value="">mover a…</option>${otras.slice(0, 40).map((x) => `<option value="${esc(x.id)}">${esc(x.titulo.slice(0, 60))}</option>`).join("")}</select></form>` : ""}` : ""}
+    </div>`;
+  }).join("");
   const oculto = `<input type="hidden" name="id" value="${esc(t.id)}"><input type="hidden" name="volver" value="${esc(opciones.volver)}">`;
   const acciones: string[] = [];
   if (puedeMarcar && esAbierta(t)) {
     if (t.estado === "pendiente") acciones.push(`<form method="post" action="/tareas/estado">${oculto}<input type="hidden" name="estado" value="curso"><button class="btn sec mini" type="submit">▶ Empezar</button></form>`);
-    acciones.push(`<form method="post" action="/tareas/estado">${oculto}<input type="hidden" name="estado" value="hecha"><button class="btn ok mini" type="submit">✓ Marcar hecha</button></form>`);
+    acciones.push(`<form method="post" action="/tareas/estado">${oculto}<input type="hidden" name="estado" value="hecha"><button class="btn ok mini" type="submit">${esRecurrente(t) ? "✓ Ya la hice esta semana" : "✓ Marcar hecha"}</button></form>`);
     acciones.push(`<form method="post" action="/tareas/posponer">${oculto}<button class="btn sec mini" type="submit">→ Posponer</button></form>`);
   }
   if (puedeMarcar && !esAbierta(t)) {
@@ -151,10 +163,13 @@ function tarjeta(t: Tarea, yo: Persona, areas: Area[], staff: Persona[], eventos
   <h3>${esc(t.titulo)}</h3>
   ${t.detalle ? `<div class="det">${esc(t.detalle)}</div>` : ""}
   <div class="meta">${badgeArea(a)} ${badgeEstado(t)} <span>${esc(cuando(t, eventos))}</span>
-    ${atras ? '<span style="color:#A03434;font-weight:700">atrasada</span>' : ""}
+    ${atras ? '<span class="tag mal">atrasada</span>' : ""}
+    ${tarde ? '<span class="tag tarde">hecha tarde</span>' : ""}
+    ${esRecurrente(t) && t.estado === "hecha" ? '<span class="tag repite">✓ esta semana · vuelve el lunes</span>' : ""}
+    ${esRecurrente(t) && t.vueltas?.length ? `<span>· ${t.vueltas.length} semana${t.vueltas.length === 1 ? "" : "s"} cumplida${t.vueltas.length === 1 ? "" : "s"}</span>` : ""}
     <span>· ${esc(quienes(t, staff))}</span>
-    ${t.hechaEl ? `<span>· hecha el ${esc(fechaCorta(t.hechaEl.slice(0, 10)))}</span>` : ""}</div>
-  ${ev ? `<div class="evid">${ev}</div>` : ""}
+    ${t.hechaEl ? `<span>· ${esRecurrente(t) ? "cumplida" : "hecha"} el ${esc(fechaCorta(t.hechaEl.slice(0, 10)))}</span>` : ""}</div>
+  ${evi ? `<div class="evid">${evi}</div>` : ""}
   ${acciones.length ? `<div class="acc">${acciones.join("")}</div>` : ""}
   ${formEvidencia}${formEditar}
 </article>`;
@@ -282,7 +297,7 @@ export function renderYo(p: Persona, todas: Tarea[], areas: Area[], staff: Perso
       <div class="acc">${acc.join("")}</div></div></template>`;
   };
   const pinta = (l: Tarea[]) => l.map((t) => tarjeta(t, p, areas, staff, eventos,
-    { editable: editable && dirigeArea(p, t.area, areas), volver: "/portal" })).join("");
+    { editable: editable && dirigeArea(p, t.area, areas), volver: "/portal", otras: mias })).join("");
   const hechas = mias.filter((t) => !esAbierta(t)).sort((a, b) => (b.hechaEl ?? "").localeCompare(a.hechaEl ?? "")).slice(0, 12);
   const a = areaDe(p, areas);
   const cuerpo = `
@@ -666,7 +681,7 @@ export function renderTableroLista(p: Persona, todas: Tarea[], areas: Area[], st
     const suyas = abiertas.filter((t) => t.area === a.id);
     if (!suyas.length) return "";
     return `<div class="grupo"><h3>${a.emoji} ${esc(a.nombre)} · ${suyas.length}</h3>${
-      suyas.map((t) => tarjeta(t, p, areas, staff, eventos, { editable: dirigeArea(p, t.area, areas), volver: "/tareas/lista" })).join("")}</div>`;
+      suyas.map((t) => tarjeta(t, p, areas, staff, eventos, { editable: dirigeArea(p, t.area, areas), volver: "/tareas/lista", otras: visibles })).join("")}</div>`;
   }).join("");
   const sinArea = abiertas.filter((t) => !areas.some((a) => a.id === t.area));
   const cuerpo = `
