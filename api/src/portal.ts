@@ -179,7 +179,7 @@ function tarjeta(t: Tarea, yo: Persona, areas: Area[], staff: Persona[], eventos
 }
 
 const JS_TOGGLE = `<script>function toggle(id) { const e = document.getElementById(id); if (e) e.hidden = !e.hidden; }</script>`;
-const CSS_PANEL = `
+export const CSS_PANEL = `
 .panel { background:#F4FBFD; border:1px solid #DDF1F8; border-radius:12px; padding:12px; margin-top:10px; }
 .panel input, .panel select { min-height:40px; font-size:14px; padding:8px 10px; }
 .panel select[multiple] { min-height:120px; }
@@ -395,7 +395,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cerrarHoja
     cabecera(p, "yo", `Hola, ${nombreCorto(p)}`, `${abiertas.length} pendiente${abiertas.length === 1 ? "" : "s"} · semana del ${rangoSemana(semanaActual())}`),
     cuerpo, CSS_PANEL + CSS_CAL);
 }
-const CSS_CAL = `
+export const CSS_CAL = `
 .cal-nav { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
 .cal-nav b { font-size:17px; font-weight:800; text-transform:capitalize; flex:1; text-align:center; }
 .cal-nav .btn { min-width:44px; }
@@ -707,7 +707,7 @@ pintaPool(); pinta(); pintaNotas();
     cabecera(p, "tablero", "Tablero de tareas", `${todas.filter(esAbierta).length} abiertas · semana del ${rangoSemana(semanaActual())}`),
     cuerpo, CSS_PANEL + CSS_CAL + CSS_KANBAN);
 }
-const CSS_KANBAN = `
+export const CSS_KANBAN = `
 main { max-width:1400px; }
 .zona { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:14px; align-items:start; }
 @media (max-width:1050px) { .zona { grid-template-columns:minmax(0,1fr); } }
