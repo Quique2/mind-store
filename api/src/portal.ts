@@ -381,14 +381,14 @@ const CSS_CAL = `
 .cal-nav .btn { min-width:44px; }
 .banda { display:flex; flex-wrap:wrap; gap:6px; align-items:center; background:#fff; border:1px solid #E4E1D2; border-radius:12px; padding:8px 10px; margin-bottom:8px; }
 .banda .et { font-size:10.5px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#6A6F98; margin-right:4px; }
-.cal-cab { display:grid; grid-template-columns:repeat(7,1fr); font-size:11px; font-weight:700; color:#6A6F98; text-align:center; margin-bottom:4px; }
-.cal { display:grid; grid-template-columns:repeat(7,1fr); gap:3px; }
-.dia { background:#fff; border:1px solid #E4E1D2; border-radius:10px; min-height:88px; padding:24px 3px 4px; position:relative; cursor:pointer; display:flex; flex-direction:column; gap:2px; }
+.cal-cab { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); font-size:11px; font-weight:700; color:#6A6F98; text-align:center; margin-bottom:4px; }
+.cal { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:3px; }
+.dia { background:#fff; border:1px solid #E4E1D2; border-radius:10px; min-height:88px; padding:24px 3px 4px; position:relative; cursor:pointer; display:flex; flex-direction:column; gap:2px; min-width:0; overflow:hidden; }
 .dia.otro { opacity:.45; }
 .dia.hoy { border-color:#2E4BC6; box-shadow:inset 0 0 0 1px #2E4BC6; }
 .dia .num { position:absolute; top:5px; left:7px; font-size:11.5px; font-weight:700; color:#6A6F98; }
 .dia.hoy .num { background:#2E4BC6; color:#fff; border-radius:999px; width:20px; height:20px; display:flex; align-items:center; justify-content:center; left:4px; top:3px; }
-.chip-cal { font:inherit; font-size:11px; font-weight:600; color:#fff; background:var(--c); border:none; border-radius:6px; padding:3px 6px; text-align:left; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-height:20px; }
+.chip-cal { min-width:0; max-width:100%; font:inherit; font-size:11px; font-weight:600; color:#fff; background:var(--c); border:none; border-radius:6px; padding:3px 6px; text-align:left; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-height:20px; }
 .chip-cal.ini { border-radius:6px 0 0 6px; margin-right:-4px; }
 .chip-cal.mid { border-radius:0; margin:0 -4px; }
 .chip-cal.fin { border-radius:0 6px 6px 0; margin-left:-4px; }
@@ -396,7 +396,7 @@ const CSS_CAL = `
 .chip-cal.est-curso { box-shadow:inset 0 0 0 2px rgba(255,255,255,.55); }
 .banda .chip-cal { border-radius:999px; }
 .dia.conev { background:#FFFDF6; }
-.ev { font:inherit; font-size:10.5px; font-weight:800; color:var(--t); background:var(--c); border:none; border-radius:5px; padding:3px 5px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:3px; min-height:19px; letter-spacing:.01em; }
+.ev { min-width:0; max-width:100%; font:inherit; font-size:10.5px; font-weight:800; color:var(--t); background:var(--c); border:none; border-radius:5px; padding:3px 5px; text-align:left; cursor:pointer; display:flex; align-items:center; gap:3px; min-height:19px; letter-spacing:.01em; }
 .ev span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
 .ev i { font-style:normal; background:rgba(255,255,255,.35); border-radius:999px; padding:0 5px; font-size:9.5px; }
 .ev.cerrado { opacity:.6; }
