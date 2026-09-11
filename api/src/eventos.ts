@@ -24,6 +24,7 @@ export interface Evento {
   nota?: string;        // ponente, detalles… (opcional)
   prereg?: boolean;     // ¿acepta prerregistros? (ausente = no)
   porConfirmar?: boolean; // fecha y lugar todavía tentativos (p. ej. falta el espacio)
+  reservado?: boolean;   // juntas: el lugar ya está apartado
 }
 export interface Asistencia {
   evento: string;       // id del evento
@@ -80,7 +81,7 @@ export const leerPreregistros = () => leerJSON<Preregistro>(F_PRE);
 
 export interface NuevoEvento {
   tipo: TipoId; titulo: string; fecha: string;
-  tipoNombre?: string; hora?: string; lugar?: string; nota?: string; prereg?: boolean;
+  tipoNombre?: string; hora?: string; lugar?: string; nota?: string; prereg?: boolean; reservado?: boolean;
 }
 export function crearEvento(d: NuevoEvento): { evento: Evento; repetido: boolean } {
   const evs = leerEventos();
@@ -102,6 +103,7 @@ export function crearEvento(d: NuevoEvento): { evento: Evento; repetido: boolean
     ...(d.lugar?.trim() ? { lugar: limpiar(d.lugar) } : {}),
     ...(d.nota?.trim() ? { nota: limpiar(d.nota) } : {}),
     ...(d.prereg ? { prereg: true } : {}),
+    ...(d.reservado ? { reservado: true } : {}),
   };
   evs.push(ev);
   escribirJSON(F_EV, evs);
@@ -136,7 +138,7 @@ export function alternarEvento(id: string): Evento | null {
 /** Abre o cierra el prerregistro del evento. */
 export interface CambioEvento {
   titulo?: string; fecha?: string; hora?: string; lugar?: string; nota?: string;
-  porConfirmar?: boolean;
+  porConfirmar?: boolean; reservado?: boolean;
 }
 /** Edita un evento ya creado. Devuelve el evento y qué cambió, para avisar. */
 export function editarEvento(id: string, c: CambioEvento): { evento: Evento; cambios: string[] } | null {
@@ -151,6 +153,10 @@ export function editarEvento(id: string, c: CambioEvento): { evento: Evento; cam
   ev.lugar = c.lugar && c.lugar.trim() ? limpiar(c.lugar) : undefined;
   ev.nota = c.nota && c.nota.trim() ? limpiar(c.nota) : undefined;
   ev.porConfirmar = c.porConfirmar ? true : undefined;
+  if (c.reservado !== undefined && Boolean(ev.reservado) !== c.reservado) {
+    ev.reservado = c.reservado ? true : undefined;
+    cambios.push(c.reservado ? "lugar reservado" : "ya no está reservado");
+  }
   if (antes.fecha !== ev.fecha) cambios.push(`fecha ${fechaBonita(antes.fecha)} → ${fechaBonita(ev.fecha)}`);
   if (antes.lugar !== (ev.lugar ?? "")) cambios.push(`lugar → ${ev.lugar ?? "sin lugar"}`);
   if (antes.hora !== (ev.hora ?? "")) cambios.push(`hora → ${ev.hora ?? "sin hora"}`);
@@ -163,6 +169,16 @@ export function alternarPrereg(id: string): Evento | null {
   const ev = evs.find((e) => e.id === id);
   if (!ev) return null;
   ev.prereg = !ev.prereg;
+  escribirJSON(F_EV, evs);
+  return ev;
+}
+
+/** Juntas: marca o quita "lugar ya reservado". */
+export function alternarReservado(id: string): Evento | null {
+  const evs = leerEventos();
+  const ev = evs.find((e) => e.id === id);
+  if (!ev) return null;
+  ev.reservado = ev.reservado ? undefined : true;
   escribirJSON(F_EV, evs);
   return ev;
 }
@@ -494,7 +510,7 @@ export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre
     return `<article class="ev-card${e.abierto ? " vivo" : ""}" data-id="${esc(e.id)}">
 <div class="ev-top">
   <div class="ev-info">
-    <div class="ev-chips">${badgeEv(e)}${e.abierto ? '<span class="est abierto">abierto</span>' : '<span class="est cerrado">cerrado</span>'}${e.prereg ? '<span class="est prereg">prerreg.</span>' : ""}${e.porConfirmar ? '<span class="est porconf">por confirmar</span>' : ""}</div>
+    <div class="ev-chips">${badgeEv(e)}${e.abierto ? '<span class="est abierto">abierto</span>' : '<span class="est cerrado">cerrado</span>'}${e.prereg ? '<span class="est prereg">prerreg.</span>' : ""}${e.porConfirmar ? '<span class="est porconf">por confirmar</span>' : ""}${juntas ? (e.reservado ? '<span class="est reservado">✓ lugar reservado</span>' : '<span class="est sinreserva">sin reservar</span>') : ""}</div>
     <h3>${esc(e.titulo)}</h3>
     <div class="ev-det">📅 ${esc(cuandoEv)}${lugarAnuncio(e) ? ` · 📍 ${esc(lugarAnuncio(e))}` : ""}</div>
     <div class="ev-link" title="${esc(url)}">🔗 <code>/asistencia/${esc(e.id)}</code></div>
@@ -511,6 +527,8 @@ export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre
     ${juntas ? "" : `<a class="btn sec chico" href="/galeria?evento=${esc(e.id)}${yClave(clave)}" title="Fotos y videos de este evento">Fotos</a>
     <form method="post" action="/eventos/prereg${q}"><input type="hidden" name="id" value="${esc(e.id)}">
     <button class="btn sec chico" type="submit" title="Apartar lugares antes del evento">${e.prereg ? "Cerrar prerreg." : "Abrir prerreg."}</button></form>`}
+    ${juntas ? `<form method="post" action="/eventos/reservado${q}"><input type="hidden" name="id" value="${esc(e.id)}">
+    <button class="btn sec chico" type="submit">${e.reservado ? "Quitar reservado" : "✓ Marcar reservado"}</button></form>` : ""}
     <form method="post" action="/eventos/alternar${q}"><input type="hidden" name="id" value="${esc(e.id)}">
     <button class="btn sec chico" type="submit">${e.abierto ? "Cerrar" : "Reabrir"}</button></form>
     <button class="btn sec chico" type="button" onclick="editar('${esc(e.id)}')">Editar</button>
@@ -526,6 +544,7 @@ export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre
   <div><label>Lugar</label><input name="lugar" value="${esc(e.lugar ?? "")}" maxlength="80" placeholder="p. ej. Ágora de las Artes"></div>
   <div style="grid-column:1/-1"><label>Nota</label><input name="nota" value="${esc(e.nota ?? "")}" maxlength="80" placeholder="ponente, detalles…"></div>
   <div class="check"><label><input type="checkbox" name="porConfirmar"${e.porConfirmar ? " checked" : ""}> Fecha y lugar por confirmar</label></div>
+  ${juntas ? `<div class="check"><label><input type="checkbox" name="reservado"${e.reservado ? " checked" : ""}> Lugar ya reservado</label></div>` : ""}
   <div style="align-self:end"><button class="btn" type="submit">Guardar cambios</button></div>
 </form></div>
 </article>`;
@@ -603,6 +622,7 @@ tr:last-child td { border-bottom:none; }
 .est.abierto { background:#E8F3D9; color:#3F6B10; } .est.cerrado { background:#EEECE3; color:#6A6F98; }
 .est.prereg { background:#F6E4FB; color:#8B21A8; }
 .est.porconf { background:#FDF3D7; color:#8A6A10; }
+.est.reservado { background:#E8F3D9; color:#3F6B10; } .est.sinreserva { background:#FDF3D7; color:#8A6A10; }
 tr.edicion td { background:#F4FBFD; }
 tr.edicion input { min-height:38px; font-size:14px; padding:7px 10px; }
 .tabla-scroll { overflow-x:auto; }
@@ -673,7 +693,10 @@ ${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
     <div><label for="fecha">Fecha</label><input id="fecha" name="fecha" type="date" value="${hoy}" required></div>
     <div><label for="hora">Hora (opcional)</label><input id="hora" name="hora" type="time"></div>
   </div>
-  ${juntas ? "" : `<div class="fila" style="margin-top:10px">
+  ${juntas ? `<div class="fila" style="margin-top:10px">
+    <div><label for="lugar">Lugar (opcional)</label><input id="lugar" name="lugar" maxlength="80" placeholder="p. ej. Sala 3 del CETEC"></div>
+    <div class="check"><label><input type="checkbox" name="reservado"> Lugar ya reservado</label></div>
+  </div>` : `<div class="fila" style="margin-top:10px">
     <div><label for="lugar">Lugar (opcional)</label><input id="lugar" name="lugar" maxlength="80" placeholder="p. ej. Ágora de las Artes"></div>
     <div><label for="nota">Nota / ponente (opcional)</label><input id="nota" name="nota" maxlength="80" placeholder="p. ej. Con Florencia Garza"></div>
     <div class="check"><label><input type="checkbox" name="prereg"> Abrir prerregistro</label></div>

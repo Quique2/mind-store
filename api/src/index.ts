@@ -16,7 +16,7 @@ import { leerEventos, leerAsistencias, crearEvento, alternarEvento, buscarEvento
          normMatricula, esTipo, renderAdmin, renderFormulario, renderResultado, renderQR,
          renderCSV as renderAsistenciaCSV, borrarEvento, renderConfirmarBorrado, esStaff,
          quitarAsistencia, cambiarStaff, listaPersonas, esJunta, leerPreregistros, preregistrar,
-         quitarPrereg, alternarPrereg, renderPreregistro, renderResultadoPre, renderCSVPre,
+         quitarPrereg, alternarPrereg, alternarReservado, renderPreregistro, renderResultadoPre, renderCSVPre,
          nombreTipo, TIPOS, editarEvento, type TipoId } from "./eventos";
 import multer from "multer";
 import { leerStaff, guardarStaff, leerAreas, guardarAreas, buscarPersona, normMat, generarPin,
@@ -451,6 +451,7 @@ app.post("/galeria/borrar", express.urlencoded({ extended: false }), (req, res) 
 });
 
 const EventoSchema = z.object({
+  reservado: z.string().optional(),
   tipo: z.string().refine(esTipo, "tipo desconocido"),
   titulo: z.string().max(80).optional().default(""),
   fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -468,7 +469,7 @@ app.post("/eventos/nuevo", express.urlencoded({ extended: false }), (req, res) =
   const d = parsed.data;
   const { evento: ev, repetido } = crearEvento({
     tipo: d.tipo as TipoId, titulo: d.titulo, fecha: d.fecha, tipoNombre: d.tipoNombre,
-    hora: d.hora, lugar: d.lugar, nota: d.nota, prereg: d.prereg === "on",
+    hora: d.hora, lugar: d.lugar, nota: d.nota, prereg: d.prereg === "on", reservado: d.reservado === "on",
   });
   const enlace = `${urlBase(req)}/${ev.prereg ? "preregistro" : "asistencia"}/${ev.id}`;
   res.redirect(volverEventos(req, repetido
@@ -478,6 +479,7 @@ app.post("/eventos/nuevo", express.urlencoded({ extended: false }), (req, res) =
 
 // abrir / cerrar el prerregistro de un evento
 const EditarEventoSchema = z.object({
+  reservado: z.string().optional(),
   id: z.string().max(12),
   titulo: z.string().trim().min(2).max(80),
   fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -494,7 +496,9 @@ app.post("/eventos/editar", express.urlencoded({ extended: false }), (req, res) 
   if (!idOk(d.id)) return res.redirect(volverEventos(req, "No se encontr\u00f3 ese evento."));
   const antes = buscarEvento(d.id);
   const r = editarEvento(d.id, { titulo: d.titulo, fecha: d.fecha, hora: d.hora, lugar: d.lugar,
-                                 nota: d.nota, porConfirmar: d.porConfirmar === "on" });
+                                 nota: d.nota, porConfirmar: d.porConfirmar === "on",
+                                 // solo las juntas traen la casilla; en eventos no se toca
+                                 reservado: antes && esJunta(antes) ? d.reservado === "on" : undefined });
   if (!r || !antes) return res.redirect(volverEventos(req, "No se encontr\u00f3 ese evento."));
   // si movimos la fecha y ya hab\u00eda gente registrada, hay que avisarles
   const gente = leerAsistencias().filter((a) => a.evento === d.id).length
@@ -504,6 +508,16 @@ app.post("/eventos/editar", express.urlencoded({ extended: false }), (req, res) 
     : `\u2713 ${r.evento.titulo}${r.cambios.length ? ": " + r.cambios.join(" \u00b7 ") : " actualizado"}`;
   espejarPronto();
   res.redirect(volverEventos(req, aviso));
+});
+
+// juntas: marca o quita "lugar ya reservado" de un toque
+app.post("/eventos/reservado", express.urlencoded({ extended: false }), (req, res) => {
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
+  const id = String((req.body as { id?: string }).id ?? "");
+  const ev = idOk(id) ? alternarReservado(id) : null;
+  res.redirect(volverEventos(req, ev
+    ? (ev.reservado ? `✓ ${ev.titulo}: lugar reservado` : `${ev.titulo}: ya no está marcado como reservado`)
+    : "No se encontró ese evento."));
 });
 
 app.post("/eventos/prereg", express.urlencoded({ extended: false }), (req, res) => {

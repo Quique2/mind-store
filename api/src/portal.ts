@@ -483,7 +483,7 @@ export function renderTablero(p: Persona, todas: Tarea[], areas: Area[], staff: 
   const cuerpo = `
 ${aviso ? `<div class="ok-aviso">${esc(aviso)}</div>` : ""}
 <div class="vistas"><a class="actual" href="/tareas">🗂️ Tablero</a><a href="/tareas/lista">📋 Lista</a>${puedeTodo ? `<a href="/tareas/cerrar-semana">🗓️ Cerrar la semana</a>` : ""}<label class="cambio"><input type="checkbox" id="ver-hechas"> ver hechas</label></div>
-<div class="pool" id="pool"></div>
+<div class="pool" id="pool" data-pegado></div>
 <p class="ayuda" id="ayuda">Arrastra una persona a una tarea para asignarla. En celular: toca la persona y luego la tarea. Toca de nuevo para soltar.</p>
 <div class="tablero" id="tablero"></div>
 <button type="button" class="pastilla" id="pastilla-notas">📝 Notas</button>
@@ -732,12 +732,49 @@ document.addEventListener('dragstart', () => { setTimeout(() => cajon('lugar'), 
 document.addEventListener('dragend', () => { if (!notaSel) cajon('volver'); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && notaSel) { notaSel = null; pintaNotas(); pinta(); cajon('volver'); } });
 cajon('volver');
+${JS_AUTOSCROLL}
 pintaPool(); pinta(); pintaNotas();
 </script>`;
   return paginaPortal("Tablero · MIND",
     cabecera(p, "tablero", "Tablero de tareas", `${todas.filter(esAbierta).length} abiertas · semana del ${rangoSemana(semanaActual())}`),
     cuerpo, CSS_PANEL + CSS_CAL + CSS_KANBAN);
 }
+/** Al arrastrar cerca de la orilla la página se desplaza sola: Chrome en Windows no deja usar
+ *  la rueda del mouse mientras arrastras. Lo usan el tablero y el editor de láminas. */
+export const JS_AUTOSCROLL = `
+// ---- desplazamiento automático al arrastrar cerca de la orilla ----
+(function () {
+  const ABAJO = 90, ARRIBA = 50, MAX = 24;
+  let vy = 0, vx = 0, raf = 0;
+  const caja = () => document.getElementById('tablero');
+  function paso() {
+    if (!vy && !vx) { raf = 0; return; }
+    if (vy) window.scrollBy(0, vy);
+    const c = caja(); if (vx && c) c.scrollLeft += vx;
+    raf = requestAnimationFrame(paso);
+  }
+  document.addEventListener('dragover', (e) => {
+    const alto = window.innerHeight, y = e.clientY;
+    // si la franja de arriba (fichas) está pegada, la orilla de arriba empieza debajo de ella
+    const pegado = document.querySelector('[data-pegado]');
+    const r0 = pegado ? pegado.getBoundingClientRect() : null;
+    const techo = r0 && r0.top <= 1 ? r0.bottom : 0;
+    vy = 0;
+    if (y > alto - ABAJO) vy = Math.ceil(MAX * Math.min(1, (y - (alto - ABAJO)) / ABAJO));
+    else if (y > techo && y < techo + ARRIBA && window.scrollY > 0) vy = -Math.ceil(MAX * Math.min(1, (techo + ARRIBA - y) / ARRIBA));
+    vx = 0;
+    const c = caja();
+    if (c && c.scrollWidth > c.clientWidth) {
+      const r = c.getBoundingClientRect();
+      if (y >= r.top && y <= r.bottom) { if (e.clientX > r.right - 70) vx = 16; else if (e.clientX < r.left + 70) vx = -16; }
+    }
+    if ((vy || vx) && !raf) raf = requestAnimationFrame(paso);
+  });
+  const para = () => { vy = 0; vx = 0; };
+  document.addEventListener('drop', para);
+  document.addEventListener('dragend', para);
+})();
+`;
 export const CSS_KANBAN = `
 main { max-width:1400px; }
 .cajon { position:fixed; top:90px; right:16px; bottom:16px; width:320px; max-width:calc(100vw - 32px); z-index:30; background:#fff; border:1px solid #E4E1D2; border-radius:16px; padding:12px 13px; box-shadow:0 18px 40px rgba(16,22,66,.22); display:flex; flex-direction:column; transform:translateX(calc(100% + 40px)); opacity:0; pointer-events:none; transition:transform .22s ease, opacity .18s ease; }

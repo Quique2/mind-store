@@ -6,7 +6,7 @@ import { areaDe, iniciales, leerAreas, nombreCorto, puedeAsignar, staffActivo, l
          dirigeArea, esPresidencia, type Area, type Persona } from "./staff";
 import { esAbierta, esc, jsonSeguro, paginaPortal, leerTareas, quienes, rangoSemana,
          semanaActual, lunesDe, ESTADOS, type Tarea } from "./tareas";
-import { navPortal, CSS_PANEL, CSS_CAL, CSS_KANBAN } from "./portal";
+import { navPortal, CSS_PANEL, CSS_CAL, CSS_KANBAN, JS_AUTOSCROLL } from "./portal";
 import type { EventoLite } from "./portal";
 
 export interface TareaFoto {
@@ -353,12 +353,14 @@ export function renderHistorialEditor(p: Persona, tb: Tablero, eventos: EventoLi
   <a href="/tareas/historial?semana=${esc(tb.semana)}">👁️ Vista bonita</a>
   <a class="actual" href="/tareas/historial?semana=${esc(tb.semana)}&modo=editar">✏️ Editar</a>
 </div>
+<div class="cabeza-fija" data-pegado>
 <div class="barra-edit" id="barra-edit">
   <span id="cuenta-cambios">Sin cambios todavía</span>
   <button type="button" class="btn sec mini" id="btn-descartar" disabled>Descartar</button>
   <button type="button" class="btn mini" id="btn-guardar" disabled>Guardar cambios</button>
 </div>
 <div class="pool" id="pool"></div>
+</div>
 <p class="ayuda" id="ayuda">Arrastra una persona a una tarea para dársela. En celular: toca la persona y luego la tarea. Toca la tarjeta para editarla completa.</p>
 <div class="tablero" id="tablero"></div>
 <button type="button" class="pastilla" id="pastilla"></button>
@@ -731,6 +733,7 @@ $('#hoja').addEventListener('click', (e) => { if (e.target.id === 'hoja') cerrar
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { cerrarHoja(); if (sel) { sel = null; pintaPool(); pinta(); } } });
 $('#btn-guardar').addEventListener('click', confirmar);
 $('#btn-descartar').addEventListener('click', () => { if (confirm('¿Descartar todos los cambios sin guardar?')) { saliendo = true; location.reload(); } });
+${JS_AUTOSCROLL}
 cajon('volver');
 pintaPool(); refresca();
 </script>`;
@@ -741,7 +744,9 @@ pintaPool(); refresca();
 }
 
 const CSS_EDIT = `
-.barra-edit { display:flex; align-items:center; gap:9px; flex-wrap:wrap; background:#fff; border:1px solid #E4E1D2; border-radius:12px; padding:9px 13px; margin-bottom:12px; position:sticky; top:0; z-index:6; }
+.barra-edit { display:flex; align-items:center; gap:9px; flex-wrap:wrap; background:#fff; border:1px solid #E4E1D2; border-radius:12px; padding:9px 13px; margin-bottom:8px; }
+.cabeza-fija { position:sticky; top:0; z-index:6; background:#F7F5EC; padding:4px 0 8px; margin-bottom:4px; }
+.cabeza-fija .pool { position:static; }
 .barra-edit span { flex:1; min-width:140px; font-size:12.5px; font-weight:700; color:#8A8FB5; }
 .barra-edit.viva { border-color:#F5C518; background:#FFFBEA; }
 .barra-edit.viva span { color:#8A6A10; }
