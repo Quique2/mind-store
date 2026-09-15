@@ -5,6 +5,7 @@
 // Las JUNTAS de staff usan el mismo motor (tipo "junta") pero viven en su propia
 // pestaña y todo el que se registra en una junta cuenta como staff.
 // Datos en el disco persistente de Railway (DATA_DIR), como cuentas.
+import { materialDe, borrarMaterialDe, type Material } from "./material";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -123,6 +124,7 @@ export function borrarEvento(id: string): { evento: Evento; asistencias: number;
   escribirJSON(F_EV, evs);
   escribirJSON(F_AS, quedan);
   if (pre.length !== quedanPre.length) escribirJSON(F_PRE, quedanPre);
+  borrarMaterialDe(id);
   return { evento, asistencias: asis.length - quedan.length, prereg: pre.length - quedanPre.length };
 }
 
@@ -472,7 +474,7 @@ Síguenos: <a href="/enlaces" style="color:#2E4BC6;font-weight:600">enlaces de M
 // ---------------- panel admin (pestañas Eventos y Juntas) ----------------
 export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre: Preregistro[],
                             clave: string, base: string, aviso?: string,
-                            modo: "eventos" | "juntas" = "eventos"): string {
+                            modo: "eventos" | "juntas" = "eventos", materiales: Material[] = []): string {
   const juntas = modo === "juntas";
   // la pestaña Eventos ve solo eventos; la pestaña Juntas solo juntas (mismo motor)
   const evs = todosEv.filter((e) => esJunta(e) === juntas);
@@ -498,6 +500,7 @@ export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre
   const staffRoster = oficial.length
     ? oficial.map((p) => ({ nombre: p.nombre, matricula: p.matricula, staff: true }))
     : listaPersonas(todasAsis).filter((p) => p.staff);
+  const nombrePor = (m: string) => oficial.find((x) => x.matricula === m)?.nombre ?? (m || "con la clave");
   const primerAbierto = evOrden.find((e) => e.abierto)?.id;
   const opcionesEv = evOrden.map((e) =>
     `<option value="${esc(e.id)}"${e.id === primerAbierto ? " selected" : ""}>${esc(fechaBonita(e.fecha))} · ${esc(e.titulo)}${e.abierto ? "" : " (cerrado)"}</option>`).join("");
@@ -506,6 +509,7 @@ export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre
     const url = `${base}/asistencia/${e.id}`;
     const nPre = conteoPre.get(e.id) ?? 0;
     const nStaff = conteoStaff.get(e.id) ?? 0;
+    const mats = materialDe(e.id, materiales);
     const cuandoEv = `${fechaBonita(e.fecha)}${e.hora ? ` · ${horaBonita(e.hora)}` : ""}`;
     return `<article class="ev-card${e.abierto ? " vivo" : ""}" data-id="${esc(e.id)}">
 <div class="ev-top">
@@ -531,6 +535,7 @@ export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre
     <button class="btn sec chico" type="submit">${e.reservado ? "Quitar reservado" : "✓ Marcar reservado"}</button></form>` : ""}
     <form method="post" action="/eventos/alternar${q}"><input type="hidden" name="id" value="${esc(e.id)}">
     <button class="btn sec chico" type="submit">${e.abierto ? "Cerrar" : "Reabrir"}</button></form>
+    ${juntas ? `<button class="btn sec chico" type="button" onclick="material('${esc(e.id)}')">📎 Material${mats.length ? ` · ${mats.length}` : ""}</button>` : ""}
     <button class="btn sec chico" type="button" onclick="editar('${esc(e.id)}')">Editar</button>
     <a class="btn sec chico peligro" href="/eventos/borrar${q}&id=${esc(e.id)}" title="Borrar (pide confirmación)">Borrar</a>
   </div>
@@ -547,6 +552,20 @@ export function renderAdmin(todosEv: Evento[], todasAsis: Asistencia[], todosPre
   ${juntas ? `<div class="check"><label><input type="checkbox" name="reservado"${e.reservado ? " checked" : ""}> Lugar ya reservado</label></div>` : ""}
   <div style="align-self:end"><button class="btn" type="submit">Guardar cambios</button></div>
 </form></div>
+${juntas ? `<div class="ev-material" id="mat-${esc(e.id)}" hidden>
+  <h4>📎 Material de la junta</h4>
+  ${mats.length ? `<ul class="mat-lista">${mats.map((m) => `<li><a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.titulo)}</a>
+    <small>${esc(nombrePor(m.por))} · ${esc(new Date(m.ts).toLocaleDateString("es-MX", { day: "2-digit", month: "short" }))}</small>
+    <form method="post" action="/juntas/material/quitar${q}" data-confirmar="¿Quitar «${esc(m.titulo)}»?"><input type="hidden" name="id" value="${esc(m.id)}">
+    <button class="btn sec chico peligro" type="submit">Quitar</button></form></li>`).join("")}</ul>`
+    : '<p class="det">Todavía no hay nada. Pega aquí el link del PPT de Canva, la minuta o lo que se haya compartido.</p>'}
+  <form method="post" action="/juntas/material${q}" class="fila" style="margin-top:10px">
+    <input type="hidden" name="evento" value="${esc(e.id)}">
+    <div><label>Qué es</label><input name="titulo" maxlength="80" placeholder="p. ej. PPT de la junta"></div>
+    <div><label>Enlace</label><input name="url" type="url" maxlength="500" required placeholder="https://www.canva.com/..."></div>
+    <div style="align-self:end"><button class="btn" type="submit">Agregar</button></div>
+  </form>
+</div>` : ""}
 </article>`;
   }).join("");
   const datos = asis.map((a) => {
@@ -667,6 +686,15 @@ td.acciones { white-space:nowrap; } td.acciones form { display:inline; }
 .btn.chico { font-size:12.5px; padding:7px 12px; min-height:34px; }
 .ev-edicion { background:#F4FBFD; border:1px solid #DDF1F8; border-radius:12px; padding:12px; margin-top:12px; }
 .ev-edicion input { min-height:38px; font-size:14px; padding:7px 10px; }
+.ev-material { background:#FFFBEA; border:1px solid #F0E4B4; border-radius:12px; padding:12px 14px; margin-top:12px; }
+.ev-material h4 { font-size:12px; font-weight:800; text-transform:uppercase; letter-spacing:.05em; color:#8A6A10; margin-bottom:8px; }
+.ev-material input { min-height:38px; font-size:14px; padding:7px 10px; }
+ul.mat-lista { list-style:none; display:flex; flex-direction:column; gap:6px; }
+ul.mat-lista li { display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:#fff; border:1px solid #F0E4B4; border-radius:10px; padding:8px 11px; }
+ul.mat-lista a { font-size:13.5px; font-weight:700; color:#2E4BC6; text-decoration:none; overflow-wrap:anywhere; }
+ul.mat-lista a:hover { text-decoration:underline; }
+ul.mat-lista small { flex:1; font-size:11px; color:#8A8FB5; }
+ul.mat-lista form { margin:0; }
 .pre-card .acc { white-space:normal; display:flex; flex-wrap:wrap; gap:6px; }
 @media (max-width:560px) { .ev-top { flex-direction:column; gap:8px; } .ev-num { text-align:left; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; } .ev-num b { display:inline; } .ev-num small, .ev-num span { display:inline; margin:0; } }
 </style></head><body>
@@ -776,6 +804,7 @@ function copiar(url, btn) {
   navigator.clipboard.writeText(url).then(() => { btn.textContent = '✓ copiado'; setTimeout(() => btn.textContent = 'Copiar', 1500); });
 }
 function editar(id) { const f = document.getElementById('ed-' + id); if (f) f.hidden = !f.hidden; }
+function material(id) { const f = document.getElementById('mat-' + id); if (f) f.hidden = !f.hidden; }
 // en el formulario de captura: los prerregistrados del evento elegido salen como
 // casillas y quien ya está registrado aparece palomeado y bloqueado
 function pintaRoster() {

@@ -32,6 +32,7 @@ import { crearNota, notaConId, puedeTocarNota, actualizarNota, borrarNota, comoT
 import { leerEnlaces, crearEnlace, editarEnlace, alternarEnlace, moverEnlace, borrarEnlace, urlSegura,
          renderEnlacesPublico, renderEnlacesAdmin, renderBorrarEnlace } from "./enlaces";
 import { renderCarga } from "./carga";
+import { leerMaterial, agregarMaterial, quitarMaterial, urlMaterialOk } from "./material";
 import { conClave } from "./ui";
 import { renderHistorial, renderHistorialEditor, diffTablero, areasDelCambio, cierresConActual,
          leerTableros, guardarTablero, guardarTableros, pendientesAntes, fotoActual,
@@ -278,13 +279,13 @@ app.get("/eventos", (req, res) => {
   if (!acceso(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
   const ok = req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
   res.type("html").send(renderAdmin(leerEventos(), leerAsistencias(), leerPreregistros(),
-                                    claveDe(req), urlBase(req), ok, "eventos"));
+                                    claveDe(req), urlBase(req), ok, "eventos", leerMaterial()));
 });
 app.get("/juntas", (req, res) => {
   if (!acceso(req)) return res.status(401).send("Acceso restringido. Agrega ?clave=... al enlace.");
   const ok = req.query.ok ? String(req.query.ok).slice(0, 200) : undefined;
   res.type("html").send(renderAdmin(leerEventos(), leerAsistencias(), leerPreregistros(),
-                                    claveDe(req), urlBase(req), ok, "juntas"));
+                                    claveDe(req), urlBase(req), ok, "juntas", leerMaterial()));
 });
 
 app.get("/eventos.csv", (req, res) => {
@@ -508,6 +509,24 @@ app.post("/eventos/editar", express.urlencoded({ extended: false }), (req, res) 
     : `\u2713 ${r.evento.titulo}${r.cambios.length ? ": " + r.cambios.join(" \u00b7 ") : " actualizado"}`;
   espejarPronto();
   res.redirect(volverEventos(req, aviso));
+});
+
+// material de las juntas: el PPT de Canva, la minuta, lo que se haya compartido
+app.post("/juntas/material", express.urlencoded({ extended: false }), (req, res) => {
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
+  if (!hayDiscoPersistente()) return res.status(503).send("No hay disco persistente.");
+  const b = req.body as Record<string, unknown>;
+  const evento = String(b.evento ?? "");
+  const url = String(b.url ?? "").trim();
+  if (!idOk(evento) || !buscarEvento(evento)) return res.redirect(volverEventos(req, "No se encontró esa junta."));
+  if (!urlMaterialOk(url)) return res.redirect(volverEventos(req, "El enlace tiene que empezar con https://"));
+  const m = agregarMaterial({ evento, url, titulo: String(b.titulo ?? ""), por: sesion(req)?.matricula ?? "" });
+  res.redirect(volverEventos(req, `✓ Material agregado: ${m.titulo}`));
+});
+app.post("/juntas/material/quitar", express.urlencoded({ extended: false }), (req, res) => {
+  if (!acceso(req)) return res.status(401).send("Acceso restringido.");
+  const m = quitarMaterial(String((req.body as { id?: string }).id ?? ""));
+  res.redirect(volverEventos(req, m ? `Se quitó: ${m.titulo}` : "Ese material ya no está."));
 });
 
 // juntas: marca o quita "lugar ya reservado" de un toque
