@@ -89,11 +89,13 @@ export const fechaCorta = (f: string) => {
 
 /** ¿La tarea corresponde a esta semana? Transversales y sin fecha siempre entran. */
 export function enSemana(t: Tarea, lunes: string): boolean {
-  if (t.cerradaEn && t.cerradaEn < lunes) return false;
+  // la marca de cierre solo cuenta si la tarea sigue cerrada (una reabierta no debe desaparecer)
+  if (!esAbierta(t) && t.cerradaEn && t.cerradaEn < lunes) return false;
   const v = t.vigencia;
   if (v.tipo !== "fechas") return true;
   const dom = sumarDias(lunes, 6);
-  const ini = v.inicio ?? "0000-00-00";
+  // con solo fecha limite, la tarea es de la semana de esa fecha
+  const ini = v.inicio ?? (v.fin ? lunesDe(v.fin) : "0000-00-00");
   const fin = v.fin ?? "9999-99-99";
   return ini <= dom && fin >= lunes;
 }
@@ -185,14 +187,23 @@ export function borrarTarea(id: string): Tarea | null {
   return t;
 }
 /** Empuja la tarea a la semana siguiente (o le pone fechas si no tenía). */
+/** Lo que cuenta para la lamina y el cierre de una semana: lo de su rango y, en la semana
+ *  en curso, tambien lo que ya se paso de fecha pero sigue abierto (se arrastra solo). */
+export function cuentaEnSemana(t: Tarea, lunes: string): boolean {
+  if (!esAbierta(t)) return false;
+  if (enSemana(t, lunes)) return true;
+  return lunes === semanaActual() && t.vigencia.tipo === "fechas" && !!t.vigencia.fin && t.vigencia.fin < lunes;
+}
+
+/** Recorre la fecha limite una semana a partir de SU fecha (no de hoy). Si ya estaba
+ *  vencida, la trae a la semana en curso. Asi funciona igual si la semana se cierra
+ *  en domingo o ya entrado el lunes, y nunca adelanta una tarea que vence mas adelante. */
 export function posponer(t: Tarea): void {
-  const sig = sumarDias(semanaActual(), 7);
-  if (t.vigencia.tipo === "fechas") {
-    t.vigencia.inicio = t.vigencia.inicio && t.vigencia.inicio > sig ? t.vigencia.inicio : sig;
-    t.vigencia.fin = sumarDias(sig, 6);
-  } else {
-    t.vigencia = { tipo: "fechas", inicio: sig, fin: sumarDias(sig, 6) };
-  }
+  const domHoy = sumarDias(semanaActual(), 6);
+  const finViejo = t.vigencia.tipo === "fechas" ? t.vigencia.fin : undefined;
+  let fin = sumarDias(lunesDe(finViejo ?? hoyISO()), 13);   // domingo de la semana siguiente
+  if (fin < domHoy) fin = domHoy;
+  t.vigencia = { tipo: "fechas", fin };
   t.cerradaEn = undefined;
   if (t.estado === "vencida") t.estado = "pendiente";
 }

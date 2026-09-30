@@ -4,7 +4,7 @@ import { diaLocal } from "./fecha";
 import { notasDe } from "./notas";
 import { ROLES, areaDe, esPresidencia, dirigeArea, nombreCorto, puedeAsignar, iniciales,
          type Area, type Persona, type RolId } from "./staff";
-import { ESTADOS, atrasada, badgeArea, badgeEstado, cuando, esAbierta, esc, fechaCorta, hoyISO,
+import { cuentaEnSemana, ESTADOS, atrasada, badgeArea, badgeEstado, cuando, esAbierta, esc, fechaCorta, hoyISO,
          jsonSeguro, paginaPortal, quienes, rangoSemana, semanaActual, sumarDias, lunesDe,
          tocaA, enSemana, hechaTarde, esRecurrente, type Tarea } from "./tareas";
 
@@ -878,7 +878,7 @@ ${JS_TOGGLE}`;
 // ---------------- cerrar semana ----------------
 export function renderCerrarSemana(p: Persona, todas: Tarea[], areas: Area[], staff: Persona[]): string {
   const lunes = semanaActual();
-  const abiertas = todas.filter(esAbierta).filter((t) => enSemana(t, lunes));
+  const abiertas = todas.filter((t) => cuentaEnSemana(t, lunes));
   const filas = abiertas.map((t) => {
     const a = areas.find((x) => x.id === t.area);
     return `<label class="linea">
@@ -912,7 +912,7 @@ export function renderCerrarSemana(p: Persona, todas: Tarea[], areas: Area[], st
 
 // ---------------- lámina semanal ----------------
 export function renderLamina(p: Persona, todas: Tarea[], areas: Area[], staff: Persona[], lunes: string): string {
-  const abiertas = todas.filter(esAbierta).filter((t) => enSemana(t, lunes));
+  const abiertas = todas.filter((t) => cuentaEnSemana(t, lunes));
   const datos = areas.map((a) => ({
     nombre: a.nombre.toUpperCase(), color: a.color,
     tareas: abiertas.filter((t) => t.area === a.id).map((t) => ({ texto: t.titulo, quien: quienes(t, staff) })),

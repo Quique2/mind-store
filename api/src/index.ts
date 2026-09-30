@@ -22,7 +22,7 @@ import multer from "multer";
 import { leerStaff, guardarStaff, leerAreas, guardarAreas, buscarPersona, normMat, generarPin,
          ponerPin, pinCorrecto, crearSesion, leerSesion, cookieSesion, cookieBorrar, staffActivo,
          esPresidencia, dirigeArea, puedeAsignar, ROLES, type Persona, type RolId } from "./staff";
-import { leerTareas, guardarTareas, crearTarea, conId, actualizar, borrarTarea, posponer, cerrarSemana,
+import { cuentaEnSemana, leerTareas, guardarTareas, crearTarea, conId, actualizar, borrarTarea, posponer, cerrarSemana,
          esAbierta, enSemana, tocaA, atrasada, semanaActual, lunesDe, hoyISO, sumarDias, DIR_EVIDENCIA,
          archivoSeguro, marcarHecha, refrescarRecurrentes, esRecurrente,
          nuevoId as nuevoIdTarea, type Tarea, type EstadoTarea } from "./tareas";
@@ -1273,7 +1273,7 @@ app.post("/tareas/cerrar-semana", urlencoded, (req, res) => {
   if (!esPresidencia(p)) return res.redirect("/tareas");
   guardarTablero(fotoActual("cierre"));   // la foto se toma antes de mover nada
   const arrastrar = listaDe((req.body as Record<string, unknown>).arrastrar);
-  const abiertas = leerTareas().filter(esAbierta).filter((t) => enSemana(t, semanaActual()));
+  const abiertas = leerTareas().filter((t) => cuentaEnSemana(t, semanaActual()));
   const vencer = abiertas.map((t) => t.id).filter((id) => !arrastrar.includes(id));
   const s = cerrarSemana(arrastrar, vencer, p.matricula);
   espejarPronto(5);
